@@ -58,6 +58,18 @@ def TestSeedApplictionsDebug(install_image):
     with IncusTestVM(os_name, test_name, test_image, client_cert_name) as vm:
         vm.WaitSystemReady(os_version, application="debug")
 
+def TestSeedApplictionsBird(install_image):
+    test_name = "seed-applications-bird"
+    test_seed = {
+        "install.json": "{}",
+        "applications.json": """{"applications":[{"name":"bird"}]}"""
+    }
+
+    test_image, os_name, os_version, client_cert_name = util._prepare_test_image(install_image, test_seed)
+
+    with IncusTestVM(os_name, test_name, test_image, client_cert_name) as vm:
+        vm.WaitSystemReady(os_version, application="bird")
+
 def TestSeedApplictionsGPUSupport(install_image):
     test_name = "seed-applications-gpu-support"
     test_seed = {
