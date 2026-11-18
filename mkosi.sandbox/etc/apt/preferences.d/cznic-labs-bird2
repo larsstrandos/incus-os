@@ -1,0 +1,4 @@
+# Only use tagged BIRD releases, never the CZ.NIC Labs branch snapshots.
+Package: bird2 bird2-doc
+Pin: version *+branch.*
+Pin-Priority: -1
