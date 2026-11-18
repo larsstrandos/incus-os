@@ -6,6 +6,9 @@ Asus
 authenticode
 autonegotiation
 backend
+BFD
+BGP
+BIRD
 BMC
 BYOSOFT
 CAs
@@ -20,6 +23,7 @@ cron
 CSM
 customizations
 customizer
+CZ
 datastore
 db
 dbx
@@ -97,6 +101,7 @@ NAT'ed
 NetBird
 NetBird's
 networkctl
+NIC
 NICs
 NQN
 NTP
