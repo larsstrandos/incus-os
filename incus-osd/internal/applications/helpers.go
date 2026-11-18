@@ -65,6 +65,8 @@ func UninstallApplication(ctx context.Context, s *state.State, name string) erro
 
 	// Remove application from the state.
 	switch name {
+	case "bird":
+		s.Applications.Bird = api.ApplicationBird{}
 	case "debug":
 		s.Applications.Debug = api.Application{}
 	case "gpu-support":
