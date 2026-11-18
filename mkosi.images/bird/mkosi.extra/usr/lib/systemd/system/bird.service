@@ -1,0 +1,13 @@
+[Unit]
+Description=BIRD Internet Routing Daemon
+After=network.target
+ConditionPathExists=/var/lib/bird/bird.conf
+
+[Service]
+Type=simple
+RuntimeDirectory=bird
+ExecStartPre=/usr/sbin/bird -p -c /var/lib/bird/bird.conf
+ExecStart=/usr/sbin/bird -f -c /var/lib/bird/bird.conf -s /run/bird/bird.ctl
+ExecReload=/usr/sbin/birdc -s /run/bird/bird.ctl configure
+Restart=on-failure
+RestartSec=5
