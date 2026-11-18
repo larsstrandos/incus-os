@@ -349,6 +349,9 @@ func (s *Server) apiApplicationsEndpoint(w http.ResponseWriter, r *http.Request)
 		case api.Application:
 			r.State.IsPrimary = app.IsPrimary()
 			resp = r
+		case api.ApplicationBird:
+			r.State.IsPrimary = app.IsPrimary()
+			resp = r
 		case api.ApplicationIncus:
 			r.State.IsPrimary = app.IsPrimary()
 			resp = r
