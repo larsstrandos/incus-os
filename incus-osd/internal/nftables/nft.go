@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strconv"
 	"strings"
 
@@ -215,6 +216,15 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			{"ip", "protocol", "icmp", "accept"},
 			{"icmp", "type", "{echo-request,destination-unreachable,time-exceeded,parameter-problem}", "accept"},
 			{"icmpv6", "type", "{echo-request,nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,mld-listener-query}", "accept"},
+		}
+
+		// Allow BGP and BFD when the BIRD application is present.
+		_, birdErr := os.Stat("/usr/sbin/bird")
+		if birdErr == nil {
+			rules = append(rules,
+				[]string{"tcp", "dport", "179", "accept"},
+				[]string{"udp", "dport", "{3784,3785}", "accept"},
+			)
 		}
 
 		// Add the user rules.
