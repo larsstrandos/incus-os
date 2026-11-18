@@ -11,6 +11,7 @@ You can install any of the non-primary applications on an IncusOS system by runn
 ```{toctree}
 :maxdepth: 1
 
+BIRD </reference/applications/bird>
 Debug </reference/applications/debug>
 GPU Support </reference/applications/gpu-support>
 Incus-Ceph </reference/applications/incus-ceph>
