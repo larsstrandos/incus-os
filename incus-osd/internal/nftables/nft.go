@@ -98,6 +98,10 @@ func ApplyNotrackFilters(ctx context.Context, networkCfg *api.SystemNetworkConfi
 		ifaces = append(ifaces, "_i"+strings.ToLower(strings.ReplaceAll(hwaddr, ":", "")), "_b"+iface.Name)
 	}
 
+	for _, vxlan := range networkCfg.VXLANs {
+		ifaces = append(ifaces, "_x"+vxlan.Name)
+	}
+
 	if len(ifaces) == 0 {
 		return nil
 	}
@@ -224,6 +228,25 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			{"ip", "protocol", "icmp", "accept"},
 			{"icmp", "type", "{echo-request,destination-unreachable,time-exceeded,parameter-problem}", "accept"},
 			{"icmpv6", "type", "{echo-request,nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,mld-listener-query}", "accept"},
+		}
+
+		// Allow VXLAN from the configured sources, VXLAN devices only listen in the default VRF.
+		if vrf == "" {
+			for _, vxlan := range networkCfg.VXLANs {
+				port := vxlan.Port
+				if port == 0 {
+					port = 4789
+				}
+
+				for _, source := range vxlan.FirewallSources {
+					family := "ip"
+					if strings.Contains(source, ":") {
+						family = "ip6"
+					}
+
+					rules = append(rules, []string{family, "saddr", source, "udp", "dport", strconv.Itoa(port), "accept"})
+				}
+			}
 		}
 
 		// Add the user rules.
