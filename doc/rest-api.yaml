@@ -755,6 +755,11 @@ definitions:
                     $ref: '#/definitions/SystemNetworkVRF'
                 type: array
                 x-go-name: VRFs
+            vxlans:
+                items:
+                    $ref: '#/definitions/SystemNetworkVXLAN'
+                type: array
+                x-go-name: VXLANs
             wireguard:
                 items:
                     $ref: '#/definitions/SystemNetworkWireguard'
@@ -1198,6 +1203,44 @@ definitions:
                 type: integer
                 x-go-name: Table
         title: SystemNetworkVRF contains information about a VRF (virtual routing and forwarding) device.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemNetworkVXLAN:
+        description: |-
+            SystemNetworkVXLAN contains information about a bridge with a VXLAN port whose forwarding entries are managed
+            by a routing daemon, such as BIRD with BGP EVPN.
+        properties:
+            firewall_sources:
+                description: Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules.
+                items:
+                    type: string
+                type: array
+                x-go-name: FirewallSources
+            local:
+                description: Local VTEP address, one of the host's static addresses.
+                type: string
+                x-go-name: Local
+            mtu:
+                format: int64
+                type: integer
+                x-go-name: MTU
+            name:
+                type: string
+                x-go-name: Name
+            port:
+                description: UDP port, 4789 if not set.
+                format: int64
+                type: integer
+                x-go-name: Port
+            vni:
+                description: VXLAN network identifier. The bridge carries this one VNI untagged.
+                format: int64
+                type: integer
+                x-go-name: VNI
+            vrf:
+                description: VRF the bridge is a member of, for example for an EVPN layer 3 VNI.
+                type: string
+                x-go-name: VRF
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemNetworkWireguard:

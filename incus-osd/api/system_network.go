@@ -54,6 +54,29 @@ type SystemNetworkConfig struct {
 	Wireguard  []SystemNetworkWireguard `json:"wireguard,omitempty"  yaml:"wireguard,omitempty"`
 	Loopback   *SystemNetworkLoopback   `json:"loopback,omitempty"   yaml:"loopback,omitempty"`
 	VRFs       []SystemNetworkVRF       `json:"vrfs,omitempty"       yaml:"vrfs,omitempty"`
+	VXLANs     []SystemNetworkVXLAN     `json:"vxlans,omitempty"     yaml:"vxlans,omitempty"`
+}
+
+// SystemNetworkVXLAN contains information about a bridge with a VXLAN port whose forwarding entries are managed
+// by a routing daemon, such as BIRD with BGP EVPN.
+type SystemNetworkVXLAN struct {
+	// Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules.
+	FirewallSources []string `json:"firewall_sources,omitempty" yaml:"firewall_sources,omitempty"`
+
+	// Local VTEP address, one of the host's static addresses.
+	Local string `json:"local" yaml:"local"`
+
+	MTU  int    `json:"mtu,omitempty" yaml:"mtu,omitempty"`
+	Name string `json:"name"          yaml:"name"`
+
+	// UDP port, 4789 if not set.
+	Port int `json:"port,omitempty" yaml:"port,omitempty"`
+
+	// VXLAN network identifier. The bridge carries this one VNI untagged.
+	VNI int `json:"vni" yaml:"vni"`
+
+	// VRF the bridge is a member of, for example for an EVPN layer 3 VNI.
+	VRF string `json:"vrf,omitempty" yaml:"vrf,omitempty"`
 }
 
 // SystemNetworkVRF contains information about a VRF (virtual routing and forwarding) device.
