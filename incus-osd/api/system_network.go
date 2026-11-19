@@ -52,6 +52,12 @@ type SystemNetworkConfig struct {
 	Bonds      []SystemNetworkBond      `json:"bonds,omitempty"      yaml:"bonds,omitempty"`
 	VLANs      []SystemNetworkVLAN      `json:"vlans,omitempty"      yaml:"vlans,omitempty"`
 	Wireguard  []SystemNetworkWireguard `json:"wireguard,omitempty"  yaml:"wireguard,omitempty"`
+	Loopback   *SystemNetworkLoopback   `json:"loopback,omitempty"   yaml:"loopback,omitempty"`
+}
+
+// SystemNetworkLoopback contains the additional addresses of the loopback interface.
+type SystemNetworkLoopback struct {
+	Addresses []string `json:"addresses,omitempty" yaml:"addresses,omitempty"`
 }
 
 // SystemNetworkInterface contains information about a network interface.

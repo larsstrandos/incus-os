@@ -733,6 +733,8 @@ definitions:
                     $ref: '#/definitions/SystemNetworkInterface'
                 type: array
                 x-go-name: Interfaces
+            loopback:
+                $ref: '#/definitions/SystemNetworkLoopback'
             proxy:
                 $ref: '#/definitions/SystemNetworkProxy'
             time:
@@ -1013,6 +1015,16 @@ definitions:
                 type: string
                 x-go-name: State
         title: SystemNetworkLink defines a struct with information on which link to set up or down.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemNetworkLoopback:
+        properties:
+            addresses:
+                items:
+                    type: string
+                type: array
+                x-go-name: Addresses
+        title: SystemNetworkLoopback contains the additional addresses of the loopback interface.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemNetworkProxy:
