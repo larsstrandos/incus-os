@@ -1144,7 +1144,7 @@ func TestVRFConfig(t *testing.T) {
 	require.Contains(t, contents["20-_vuplink0.network"], "[Network]\nVRF=cust\n")
 	require.NotContains(t, contents["20-_vmgmt.network"], "VRF=")
 	require.Contains(t, contents["22-uplink1.network"], "[Network]\nVRF=cust\n")
-	require.Equal(t, "[Match]\nName=cust\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\nAddress=10.255.1.11/32\nAddress=2001:db8:c0::11/128\n", contents["25-cust.network"])
+	require.Equal(t, "[Match]\nName=cust\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n\n[Address]\nAddress=10.255.1.11/32\nAddPrefixRoute=no\n\n[Address]\nAddress=2001:db8:c0::11/128\nAddPrefixRoute=no\n", contents["25-cust.network"])
 
 	// Bad configurations.
 	cfg = newCfg()

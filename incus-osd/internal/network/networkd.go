@@ -2084,8 +2084,11 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 		buf.Reset()
 		_, _ = buf.WriteString("[Match]\nName=" + v.Name + "\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n")
 
+		// Don't add prefix routes for the host addresses: in a VRF the prefix route and the local
+		// route share the VRF's table, and the kernel then deletes the IPv6 local route when
+		// systemd-networkd re-applies an existing address (such as after a restart).
 		for _, address := range v.Addresses {
-			_, _ = buf.WriteString("Address=" + address + "\n")
+			_, _ = buf.WriteString("\n[Address]\nAddress=" + address + "\nAddPrefixRoute=no\n")
 		}
 
 		ret = append(ret, networkdConfigFile{
