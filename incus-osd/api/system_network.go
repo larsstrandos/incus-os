@@ -67,6 +67,7 @@ type SystemNetworkInterface struct {
 	Ethernet          *SystemNetworkEthernet      `json:"ethernet,omitempty"            yaml:"ethernet,omitempty"`
 	FirewallRules     []SystemNetworkFirewallRule `json:"firewall_rules,omitempty"      yaml:"firewall_rules,omitempty"`
 	Hwaddr            string                      `json:"hwaddr"                        yaml:"hwaddr"`
+	IPv6LinkLocal     bool                        `json:"ipv6_link_local,omitempty"     yaml:"ipv6_link_local,omitempty"`
 	LLDP              bool                        `json:"lldp,omitempty"                yaml:"lldp,omitempty"`
 	MTU               int                         `json:"mtu,omitempty"                 yaml:"mtu,omitempty"`
 	Name              string                      `json:"name"                          yaml:"name"`
@@ -84,6 +85,7 @@ type SystemNetworkBond struct {
 	Ethernet          *SystemNetworkEthernet      `json:"ethernet,omitempty"            yaml:"ethernet,omitempty"`
 	FirewallRules     []SystemNetworkFirewallRule `json:"firewall_rules,omitempty"      yaml:"firewall_rules,omitempty"`
 	Hwaddr            string                      `json:"hwaddr,omitempty"              yaml:"hwaddr,omitempty"`
+	IPv6LinkLocal     bool                        `json:"ipv6_link_local,omitempty"     yaml:"ipv6_link_local,omitempty"`
 	LLDP              bool                        `json:"lldp,omitempty"                yaml:"lldp,omitempty"`
 	Members           []string                    `json:"members,omitempty"             yaml:"members,omitempty"`
 	Mode              string                      `json:"mode"                          yaml:"mode"`
@@ -112,6 +114,7 @@ type SystemNetworkVLAN struct {
 	Addresses         []string                    `json:"addresses,omitempty"           yaml:"addresses,omitempty"`
 	FirewallRules     []SystemNetworkFirewallRule `json:"firewall_rules,omitempty"      yaml:"firewall_rules,omitempty"`
 	ID                int                         `json:"id"                            yaml:"id"`
+	IPv6LinkLocal     bool                        `json:"ipv6_link_local,omitempty"     yaml:"ipv6_link_local,omitempty"`
 	MTU               int                         `json:"mtu,omitempty"                 yaml:"mtu,omitempty"`
 	Name              string                      `json:"name"                          yaml:"name"`
 	Parent            string                      `json:"parent"                        yaml:"parent"`
