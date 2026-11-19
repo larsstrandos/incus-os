@@ -56,6 +56,8 @@ The following top-level network configuration options can be set:
 
 * `wireguard`: Zero or more WireGuard interfaces that should be configured for the system.
 
+* `loopback`: Optionally, additional `/32` and `/128` addresses for the loopback interface.
+
 * `dns`: Optionally, configure custom DNS information for the system.
 
 * `proxy`: Optionally, configure a proxy for the system.
@@ -199,6 +201,25 @@ config:
 ```
 
 This generates a `GatewayOnLink=yes` route for `systemd-networkd`.
+
+#### Loopback and IPv6 link-local addresses
+
+Configure stable addresses on the loopback interface, and an interface with only an IPv6 link-local address, as used for unnumbered BGP:
+
+```yaml
+config:
+  loopback:
+    addresses:
+    - "10.255.0.11/32"
+    - "2001:db8:b00b::11/128"
+
+  interfaces:
+  - name: "uplink0"
+    hwaddr: "enp5s0"
+    ipv6_link_local: true
+```
+
+Interfaces, bonds and VLANs with `ipv6_link_local` and no addresses aren't required for the system to be online.
 
 #### Automatic roll back of network configuration
 
