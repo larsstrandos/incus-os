@@ -22,6 +22,7 @@ import (
 	ocapi "github.com/FuturFusion/operations-center/shared/api"
 	"github.com/lxc/incus/v7/shared/subprocess"
 	"github.com/lxc/incus/v7/shared/units"
+	"github.com/vishvananda/netlink"
 
 	"github.com/lxc/incus-os/incus-osd/api"
 	"github.com/lxc/incus-os/incus-osd/internal/nftables"
@@ -310,6 +311,15 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 		numIPs += len(networkCfg.Loopback.Addresses)
 	}
 
+	for _, vrf := range networkCfg.VRFs {
+		if slices.Contains(names, vrf.Name) {
+			return errors.New("duplicate interface/bond/vlan/wireguard/vrf name: " + vrf.Name)
+		}
+
+		names = append(names, vrf.Name)
+		numIPs += len(vrf.Addresses)
+	}
+
 	if numIPs == 0 {
 		return errors.New("zero IP addresses are configured")
 	}
@@ -339,6 +349,11 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 	}
 
 	err = validateLoopback(networkCfg.Loopback)
+	if err != nil {
+		return err
+	}
+
+	err = validateVRFs(networkCfg)
 	if err != nil {
 		return err
 	}
@@ -447,10 +462,46 @@ func UpdateNetworkState(ctx context.Context, n *api.SystemNetwork) error {
 		n.State.Interfaces["lo"] = loState
 	}
 
+	// State update for VRFs.
+	vrfDevices := []string{}
+
+	for _, v := range n.Config.VRFs {
+		vState, err := getInterfaceState(ctx, "vrf", v.Name, "", "", nil)
+		if err != nil {
+			return err
+		}
+
+		vrfDevices = append(vrfDevices, v.Name)
+		n.State.Interfaces[v.Name] = vState
+	}
+
+	for _, i := range n.Config.Interfaces {
+		if i.VRF != "" {
+			vrfDevices = append(vrfDevices, i.Name)
+		}
+	}
+
+	for _, b := range n.Config.Bonds {
+		if b.VRF != "" {
+			vrfDevices = append(vrfDevices, b.Name)
+		}
+	}
+
+	for _, v := range n.Config.VLANs {
+		if v.VRF != "" {
+			vrfDevices = append(vrfDevices, v.Name)
+		}
+	}
+
 	// Ensure required roles exist.
 	if !slices.Contains(rolesFound, api.SystemNetworkInterfaceRoleManagement) || !slices.Contains(rolesFound, api.SystemNetworkInterfaceRoleCluster) {
 		for iName, i := range n.State.Interfaces {
 			iState := i
+
+			// The loopback and anything in a VRF can't be used for management.
+			if iName == "lo" || slices.Contains(vrfDevices, iName) {
+				continue
+			}
 
 			if !slices.Contains(rolesFound, api.SystemNetworkInterfaceRoleManagement) && iState.State == "routable" {
 				if iState.Roles == nil {
@@ -602,7 +653,17 @@ func linkDeviceName(mac string) string {
 }
 
 func parseRoutes(ctx context.Context, iface string) ([]api.SystemNetworkRoute, error) {
-	output, err := subprocess.RunCommandContext(ctx, "ip", "route", "show", "dev", resolveBridge(iface))
+	dev := resolveBridge(iface)
+
+	args := []string{"route", "show", "dev", dev}
+
+	// Routes of a VRF member live in the VRF's table.
+	vrf := getDeviceVRF(dev)
+	if vrf != "" {
+		args = []string{"route", "show", "vrf", vrf, "dev", dev}
+	}
+
+	output, err := subprocess.RunCommandContext(ctx, "ip", args...)
 	if err != nil {
 		// If a network device doesn't (yet) exist, return an empty list of routes.
 		// This may happen if the system is starting up and all network devices have
@@ -627,6 +688,26 @@ func parseRoutes(ctx context.Context, iface string) ([]api.SystemNetworkRoute, e
 	}
 
 	return routes, nil
+}
+
+// getDeviceVRF returns the name of the VRF a network device is enslaved to, if any.
+func getDeviceVRF(dev string) string {
+	link, err := netlink.LinkByName(dev)
+	if err != nil || link.Attrs().MasterIndex == 0 {
+		return ""
+	}
+
+	master, err := netlink.LinkByIndex(link.Attrs().MasterIndex)
+	if err != nil {
+		return ""
+	}
+
+	_, isVRF := master.(*netlink.Vrf)
+	if !isVRF {
+		return ""
+	}
+
+	return master.Attrs().Name
 }
 
 // getWireguardState runs various commands to gather wireguard state for a specific wireguard interface.
@@ -927,7 +1008,7 @@ func getInterfaceState(ctx context.Context, ifaceType string, iface string, hwad
 	switch ifaceType {
 	case "interface", "bond_member":
 		underlyingDevice = "_p" + strings.ToLower(strings.ReplaceAll(hwaddr, ":", ""))
-	case "bond", "physical", "loopback":
+	case "bond", "physical", "loopback", "vrf":
 		underlyingDevice = iface
 	case "vlan":
 		if hwaddr == "" {
@@ -1612,6 +1693,25 @@ func generateNetdevFileContents(networkCfg api.SystemNetworkConfig) ([]networkdC
 		})
 	}
 
+	// Create VRFs.
+	for _, v := range networkCfg.VRFs {
+		buf.Reset()
+
+		err := t.Execute(&buf, netdevFileVariables{
+			Type:     "vrf",
+			Name:     v.Name,
+			VRFTable: v.Table,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("09-%s.netdev", v.Name),
+			Contents: buf.String(),
+		})
+	}
+
 	// Create wireguard.
 	for i, w := range networkCfg.Wireguard {
 		buf.Reset()
@@ -1696,6 +1796,7 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 			Addresses:         i.Addresses,
 			IPv6LinkLocal:     i.IPv6LinkLocal,
 			Routes:            i.Routes,
+			VRF:               i.VRF,
 		})
 		if err != nil {
 			return nil, err
@@ -1822,6 +1923,7 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 			Addresses:         b.Addresses,
 			IPv6LinkLocal:     b.IPv6LinkLocal,
 			Routes:            b.Routes,
+			VRF:               b.VRF,
 		})
 		if err != nil {
 			return nil, err
@@ -1916,6 +2018,7 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 			Addresses:         v.Addresses,
 			IPv6LinkLocal:     v.IPv6LinkLocal,
 			Routes:            v.Routes,
+			VRF:               v.VRF,
 		})
 		if err != nil {
 			return nil, err
@@ -1972,6 +2075,21 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 
 		ret = append(ret, networkdConfigFile{
 			Name:     "24-lo.network",
+			Contents: buf.String(),
+		})
+	}
+
+	// Create network for each VRF device, bringing it up and adding its addresses.
+	for _, v := range networkCfg.VRFs {
+		buf.Reset()
+		_, _ = buf.WriteString("[Match]\nName=" + v.Name + "\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n")
+
+		for _, address := range v.Addresses {
+			_, _ = buf.WriteString("Address=" + address + "\n")
+		}
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("25-%s.network", v.Name),
 			Contents: buf.String(),
 		})
 	}
@@ -2172,6 +2290,16 @@ func cleanupStaleDevices(ctx context.Context, oldCfg *api.SystemNetworkConfig, n
 			deleteInterfaces = append(deleteInterfaces, oldCfg.Wireguard[oldIndex].Name)
 
 			continue
+		}
+	}
+
+	// Check for changed/deleted VRFs. Their members get enslaved again when networkd restarts,
+	// but devices not managed by IncusOS (such as Incus routed NICs) are left out of the VRF.
+	for _, oldVRF := range oldCfg.VRFs {
+		if !slices.ContainsFunc(newCfg.VRFs, func(v api.SystemNetworkVRF) bool {
+			return v.Name == oldVRF.Name && v.Table == oldVRF.Table
+		}) {
+			deleteInterfaces = append(deleteInterfaces, oldVRF.Name)
 		}
 	}
 

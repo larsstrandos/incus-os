@@ -415,22 +415,101 @@ func validateLoopback(loopback *api.SystemNetworkLoopback) error {
 		return nil
 	}
 
-	for index, address := range loopback.Addresses {
+	return validateHostAddresses("loopback", loopback.Addresses)
+}
+
+// validateHostAddresses checks a list of /32 and /128 addresses as used on loopback-like devices.
+func validateHostAddresses(device string, addresses []string) error {
+	for index, address := range addresses {
 		prefix, err := netip.ParsePrefix(address)
 		if err != nil {
-			return fmt.Errorf("loopback address %d invalid IP address '%s', must provide a CIDR mask", index, address)
+			return fmt.Errorf("%s address %d invalid IP address '%s', must provide a CIDR mask", device, index, address)
 		}
 
 		if prefix.Bits() != prefix.Addr().BitLen() {
-			return fmt.Errorf("loopback address %d '%s' must be a /32 or /128", index, address)
+			return fmt.Errorf("%s address %d '%s' must be a /32 or /128", device, index, address)
 		}
 
 		if prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast() {
-			return fmt.Errorf("loopback address %d '%s' is reserved", index, address)
+			return fmt.Errorf("%s address %d '%s' is reserved", device, index, address)
 		}
 
-		if slices.Contains(loopback.Addresses[:index], address) {
-			return fmt.Errorf("loopback address %d '%s' is a duplicate", index, address)
+		if slices.Contains(addresses[:index], address) {
+			return fmt.Errorf("%s address %d '%s' is a duplicate", device, index, address)
+		}
+	}
+
+	return nil
+}
+
+func validateVRFs(cfg *api.SystemNetworkConfig) error {
+	tables := []int{}
+
+	for index, vrf := range cfg.VRFs {
+		err := validateName(vrf.Name)
+		if err != nil {
+			return fmt.Errorf("vrf %d %s", index, err.Error())
+		}
+
+		if vrf.Table < 1 || vrf.Table > 4294967295 {
+			return fmt.Errorf("vrf %d table %d must be between 1 and 4294967295", index, vrf.Table)
+		}
+
+		// The default, main and local tables, and the tables used for WireGuard default routes.
+		if vrf.Table == 253 || vrf.Table == 254 || vrf.Table == 255 || (vrf.Table >= wireguardBaseTable && vrf.Table < wireguardBaseTable+len(cfg.Wireguard)) {
+			return fmt.Errorf("vrf %d table %d is reserved", index, vrf.Table)
+		}
+
+		if slices.Contains(tables, vrf.Table) {
+			return fmt.Errorf("vrf %d table %d is already used by another vrf", index, vrf.Table)
+		}
+
+		tables = append(tables, vrf.Table)
+
+		err = validateHostAddresses(fmt.Sprintf("vrf %d", index), vrf.Addresses)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Check the VRF members.
+	checkMember := func(kind string, name string, vrf string, roles []string) error {
+		if vrf == "" {
+			return nil
+		}
+
+		if !slices.ContainsFunc(cfg.VRFs, func(v api.SystemNetworkVRF) bool { return v.Name == vrf }) {
+			return fmt.Errorf("%s '%s' vrf '%s' doesn't exist", kind, name, vrf)
+		}
+
+		// The host's own services (API, DNS, NTP, updates, clustering) run in the default VRF.
+		for _, role := range []string{api.SystemNetworkInterfaceRoleManagement, api.SystemNetworkInterfaceRoleCluster} {
+			if slices.Contains(roles, role) {
+				return fmt.Errorf("%s '%s' with role '%s' cannot be in a vrf", kind, name, role)
+			}
+		}
+
+		return nil
+	}
+
+	for _, iface := range cfg.Interfaces {
+		err := checkMember("interface", iface.Name, iface.VRF, iface.Roles)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, bond := range cfg.Bonds {
+		err := checkMember("bond", bond.Name, bond.VRF, bond.Roles)
+		if err != nil {
+			return err
+		}
+	}
+
+	for _, vlan := range cfg.VLANs {
+		err := checkMember("vlan", vlan.Name, vlan.VRF, vlan.Roles)
+		if err != nil {
+			return err
 		}
 	}
 

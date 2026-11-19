@@ -44,6 +44,8 @@ DownDelaySec={{.DownDelay}}ms
   {{- end}}
 {{- else if eq .Type "vlan"}}[VLAN]
 Id={{.VLANID}}
+{{- else if eq .Type "vrf"}}[VRF]
+Table={{.VRFTable}}
 {{- else if eq .Type "wireguard"}}[WireGuard]
 PrivateKey={{.WGPrivateKey}}
   {{- if .WGPort}}

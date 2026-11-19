@@ -27,6 +27,7 @@ type netdevFileVariables struct {
 	WGPort         int
 	WGFirewallMark int
 	WGPeers        []api.SystemNetworkWireguardPeer
+	VRFTable       int
 }
 
 type networkFileVariables struct {
@@ -47,6 +48,7 @@ type networkFileVariables struct {
 	RouteTable        int
 	RulePriority      int
 	VLANTags          []int
+	VRF               string
 }
 
 // NextRulePriority returns the priority following RulePriority.

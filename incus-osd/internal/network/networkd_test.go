@@ -1110,3 +1110,68 @@ func TestIPv6LinkLocal(t *testing.T) {
 	require.Len(t, cfgs, 1)
 	require.Equal(t, "[Match]\nName=fabric\n\n[Link]\nRequiredForOnline=no\nMTUBytes=1500\n\n[DHCP]\nClientIdentifier=mac\nRouteMetric=100\nUseMTU=true\n\n[DHCPv6]\nWithoutRA=solicit\n\n[Network]\nLinkLocalAddressing=ipv6\nIPv4ReversePathFilter=no\nIPv6AcceptRA=false\n", cfgs[0].Contents)
 }
+
+func TestVRFConfig(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() api.SystemNetworkConfig {
+		return api.SystemNetworkConfig{
+			Interfaces: []api.SystemNetworkInterface{
+				{Name: "mgmt", Hwaddr: "AA:BB:CC:DD:EE:01", Addresses: []string{"10.0.0.10/24"}, Roles: []string{"management", "cluster"}},
+				{Name: "uplink0", Hwaddr: "AA:BB:CC:DD:EE:02", IPv6LinkLocal: true, VRF: "cust"},
+			},
+			VLANs: []api.SystemNetworkVLAN{{Name: "uplink1", Parent: "mgmt", ID: 10, IPv6LinkLocal: true, VRF: "cust"}},
+			VRFs:  []api.SystemNetworkVRF{{Name: "cust", Table: 100, Addresses: []string{"10.255.1.11/32", "2001:db8:c0::11/128"}}},
+		}
+	}
+
+	cfg := newCfg()
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	netdevs, err := generateNetdevFileContents(cfg)
+	require.NoError(t, err)
+	require.Equal(t, "09-cust.netdev", netdevs[len(netdevs)-1].Name)
+	require.Equal(t, "[NetDev]\nName=cust\nKind=vrf\n\n[VRF]\nTable=100\n", netdevs[len(netdevs)-1].Contents)
+
+	networks, err := generateNetworkFileContents(context.TODO(), cfg)
+	require.NoError(t, err)
+
+	contents := map[string]string{}
+	for _, network := range networks {
+		contents[network.Name] = network.Contents
+	}
+
+	require.Contains(t, contents["20-_vuplink0.network"], "[Network]\nVRF=cust\n")
+	require.NotContains(t, contents["20-_vmgmt.network"], "VRF=")
+	require.Contains(t, contents["22-uplink1.network"], "[Network]\nVRF=cust\n")
+	require.Equal(t, "[Match]\nName=cust\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\nAddress=10.255.1.11/32\nAddress=2001:db8:c0::11/128\n", contents["25-cust.network"])
+
+	// Bad configurations.
+	cfg = newCfg()
+	cfg.Interfaces[1].VRF = "missing"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "interface 'uplink0' vrf 'missing' doesn't exist")
+
+	cfg = newCfg()
+	cfg.Interfaces[0].VRF = "cust"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "interface 'mgmt' with role 'management' cannot be in a vrf")
+
+	cfg = newCfg()
+	cfg.VRFs[0].Table = 254
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vrf 0 table 254 is reserved")
+
+	cfg = newCfg()
+	cfg.VRFs[0].Table = 0
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vrf 0 table 0 must be between 1 and 4294967295")
+
+	cfg = newCfg()
+	cfg.VRFs = append(cfg.VRFs, api.SystemNetworkVRF{Name: "other", Table: 100})
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vrf 1 table 100 is already used by another vrf")
+
+	cfg = newCfg()
+	cfg.VRFs[0].Name = "uplink0"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "duplicate interface/bond/vlan/wireguard/vrf name: uplink0")
+
+	cfg = newCfg()
+	cfg.VRFs[0].Addresses = []string{"10.255.1.0/24"}
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vrf 0 address 0 '10.255.1.0/24' must be a /32 or /128")
+}

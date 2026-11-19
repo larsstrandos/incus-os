@@ -29,6 +29,9 @@ UseMTU=true
 WithoutRA=solicit
 {{end}}
 [Network]
+{{- if .VRF}}
+VRF={{.VRF}}
+{{- end}}
 {{- range .VLANs}}
   {{- if eq .Parent $.Name}}
 VLAN={{.Name}}
