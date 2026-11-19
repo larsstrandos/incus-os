@@ -1099,3 +1099,14 @@ func TestLoopbackConfig(t *testing.T) {
 	err = ValidateNetworkConfiguration(context.TODO(), &cfg, true)
 	require.EqualError(t, err, "loopback address 0 '127.0.0.2/32' is reserved")
 }
+
+func TestIPv6LinkLocal(t *testing.T) {
+	t.Parallel()
+
+	cfg := api.SystemNetworkConfig{VLANs: []api.SystemNetworkVLAN{{Name: "fabric", Parent: "uplink", ID: 10, IPv6LinkLocal: true}}}
+
+	cfgs, err := generateNetworkFileContents(context.TODO(), cfg)
+	require.NoError(t, err)
+	require.Len(t, cfgs, 1)
+	require.Equal(t, "[Match]\nName=fabric\n\n[Link]\nRequiredForOnline=no\nMTUBytes=1500\n\n[DHCP]\nClientIdentifier=mac\nRouteMetric=100\nUseMTU=true\n\n[DHCPv6]\nWithoutRA=solicit\n\n[Network]\nLinkLocalAddressing=ipv6\nIPv4ReversePathFilter=no\nIPv6AcceptRA=false\n", cfgs[0].Contents)
+}
