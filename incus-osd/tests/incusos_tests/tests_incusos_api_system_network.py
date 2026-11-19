@@ -313,8 +313,8 @@ def TestIncusOSAPISystemNetworkConfigInterfaces(install_image):
             if result["status_code"] == 200:
                 raise IncusOSException("unexpected success applying an invalid advertise mode")
 
-            # Apply a new network configuration that changes names, roles and forces the link speed.
-            result = vm.APIRequest("/1.0/system/network", method="PUT", body="""{"config":{"time":{"timezone":"UTC"},"interfaces":[{"addresses":["dhcp4","slaac"],"hwaddr":""" + enp5MAC + ""","name":"management","required_for_online":"both","roles":["management","cluster","storage"]},{"hwaddr":""" + enp6MAC + ""","name":"vm","roles":["instances"],"ethernet":{"speed":1000}}]}}""")
+            # Apply a new network configuration that changes names, roles, forces the link speed and adds loopback and IPv6 link-local addresses.
+            result = vm.APIRequest("/1.0/system/network", method="PUT", body="""{"config":{"time":{"timezone":"UTC"},"loopback":{"addresses":["10.255.0.1/32","2001:db8::1/128"]},"interfaces":[{"addresses":["dhcp4","slaac"],"hwaddr":""" + enp5MAC + ""","name":"management","required_for_online":"both","roles":["management","cluster","storage"]},{"hwaddr":""" + enp6MAC + ""","name":"vm","roles":["instances"],"ipv6_link_local":true,"ethernet":{"speed":1000}}]}}""")
             if result["status_code"] != 200:
                 raise IncusOSException("unexpected status code %d: %s" % (result["error_code"], result["error"]))
 
@@ -346,6 +346,13 @@ def TestIncusOSAPISystemNetworkConfigInterfaces(install_image):
             if interfaces["vm"]["speed"] != "1000":
                 raise IncusOSException("expected vm interface speed to be 1000, got " + interfaces["vm"]["speed"])
 
+            if "lo" not in interfaces or "10.255.0.1" not in interfaces["lo"]["addresses"] or "2001:db8::1" not in interfaces["lo"]["addresses"]:
+                raise IncusOSException("expected loopback addresses on lo")
+
+            vmAddresses = vm.RunCommand("ip", "-6", "address", "show", "dev", "_vvm").stdout.decode("utf-8")
+            if "inet6 fe80:" not in vmAddresses:
+                raise IncusOSException("expected vm interface to have an IPv6 link-local address")
+
             # Set the vm link down and back up.
             result = vm.APIRequest("/1.0/system/network/:link-state", method="POST", body="""{"name":"vm","state":"down"}""")
             if result["status_code"] != 200:
@@ -371,6 +378,20 @@ def TestIncusOSAPISystemNetworkConfigInterfaces(install_image):
 
             if result["error"] != "'doesnotexist' is not a configured physical network interface or bond member":
                 raise IncusOSException("unexpected error message: " + result["error"])
+
+            # Removing the loopback addresses must keep the kernel's own ones.
+            result = vm.APIRequest("/1.0/system/network", method="PUT", body="""{"config":{"time":{"timezone":"UTC"},"interfaces":[{"addresses":["dhcp4","slaac"],"hwaddr":""" + enp5MAC + ""","name":"management","required_for_online":"both","roles":["management","cluster","storage"]},{"hwaddr":""" + enp6MAC + ""","name":"vm","roles":["instances"],"ipv6_link_local":true,"ethernet":{"speed":1000}}]}}""")
+            if result["status_code"] != 200:
+                raise IncusOSException("unexpected status code %d: %s" % (result["error_code"], result["error"]))
+
+            time.sleep(5)
+
+            loAddresses = vm.RunCommand("ip", "address", "show", "dev", "lo").stdout.decode("utf-8")
+            if "10.255.0.1/32" in loAddresses or "2001:db8::1/128" in loAddresses:
+                raise IncusOSException("expected loopback addresses to be removed")
+
+            if "127.0.0.1/8" not in loAddresses or "::1/128" not in loAddresses:
+                raise IncusOSException("expected kernel loopback addresses to remain")
 
 def TestIncusOSAPISystemNetworkBond(install_image):
     test_name = "incusos-api-system-network-bond"
