@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -189,6 +190,14 @@ func ApplyForwardFilters(ctx context.Context, networkCfg *api.SystemNetworkConfi
 		return err
 	}
 
+	// Traffic received in a VRF has the VRF device as its input interface, the member being the slave input interface.
+	if len(networkCfg.VRFs) > 0 {
+		_, err = subprocess.RunCommandContext(ctx, "nft", "add", "rule", "inet", "incus-osd", "forward", "meta", "sdifname", set, "oifname", set, "drop")
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -207,7 +216,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 	}
 
 	// Apply the filters.
-	applyFirewall := func(iface string, firewallRules []api.SystemNetworkFirewallRule) error {
+	applyFirewall := func(iface string, vrf string, firewallRules []api.SystemNetworkFirewallRule) error {
 		// Baseline rules.
 		rules := [][]string{
 			{"ct", "state", "established,related", "accept"},
@@ -255,11 +264,22 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 		}
 
 		// Apply the interface rules.
-		args := []string{"add", "rule", "inet", "incus-osd", "input", "iifname", iface}
-		for _, rule := range rules {
-			_, err = subprocess.RunCommandContext(ctx, "nft", append(args, rule...)...)
-			if err != nil {
-				return err
+		matches := [][]string{{"iifname", iface}}
+
+		// Traffic to the host received on a VRF member has the VRF device as its input interface,
+		// except for neighbor discovery.
+		if vrf != "" {
+			matches = append(matches, []string{"iifname", vrf, "meta", "sdifname", iface})
+		}
+
+		for _, match := range matches {
+			args := append([]string{"add", "rule", "inet", "incus-osd", "input"}, match...)
+
+			for _, rule := range rules {
+				_, err = subprocess.RunCommandContext(ctx, "nft", append(slices.Clone(args), rule...)...)
+				if err != nil {
+					return err
+				}
 			}
 		}
 
@@ -271,7 +291,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			continue
 		}
 
-		err := applyFirewall("_v"+iface.Name, iface.FirewallRules)
+		err := applyFirewall("_v"+iface.Name, iface.VRF, iface.FirewallRules)
 		if err != nil {
 			return err
 		}
@@ -282,7 +302,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			continue
 		}
 
-		err := applyFirewall("_v"+iface.Name, iface.FirewallRules)
+		err := applyFirewall("_v"+iface.Name, iface.VRF, iface.FirewallRules)
 		if err != nil {
 			return err
 		}
@@ -293,7 +313,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			continue
 		}
 
-		err := applyFirewall(iface.Name, iface.FirewallRules)
+		err := applyFirewall(iface.Name, iface.VRF, iface.FirewallRules)
 		if err != nil {
 			return err
 		}
@@ -304,7 +324,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			continue
 		}
 
-		err := applyFirewall(iface.Name, iface.FirewallRules)
+		err := applyFirewall(iface.Name, "", iface.FirewallRules)
 		if err != nil {
 			return err
 		}
