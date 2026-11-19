@@ -320,6 +320,14 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 		numIPs += len(vrf.Addresses)
 	}
 
+	for _, vxlan := range networkCfg.VXLANs {
+		if slices.Contains(names, vxlan.Name) {
+			return errors.New("duplicate interface/bond/vlan/wireguard/vrf/vxlan name: " + vxlan.Name)
+		}
+
+		names = append(names, vxlan.Name)
+	}
+
 	if numIPs == 0 {
 		return errors.New("zero IP addresses are configured")
 	}
@@ -354,6 +362,11 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 	}
 
 	err = validateVRFs(networkCfg)
+	if err != nil {
+		return err
+	}
+
+	err = validateVXLANs(networkCfg)
 	if err != nil {
 		return err
 	}
@@ -467,6 +480,17 @@ func UpdateNetworkState(ctx context.Context, n *api.SystemNetwork) error {
 
 	for _, v := range n.Config.VRFs {
 		vState, err := getInterfaceState(ctx, "vrf", v.Name, "", "", nil)
+		if err != nil {
+			return err
+		}
+
+		vrfDevices = append(vrfDevices, v.Name)
+		n.State.Interfaces[v.Name] = vState
+	}
+
+	// State update for VXLAN bridges, which have no addresses and can't be used for management either.
+	for _, v := range n.Config.VXLANs {
+		vState, err := getInterfaceState(ctx, "vxlan", v.Name, "", "", nil)
 		if err != nil {
 			return err
 		}
@@ -1008,7 +1032,7 @@ func getInterfaceState(ctx context.Context, ifaceType string, iface string, hwad
 	switch ifaceType {
 	case "interface", "bond_member":
 		underlyingDevice = "_p" + strings.ToLower(strings.ReplaceAll(hwaddr, ":", ""))
-	case "bond", "physical", "loopback", "vrf":
+	case "bond", "physical", "loopback", "vrf", "vxlan":
 		underlyingDevice = iface
 	case "vlan":
 		if hwaddr == "" {
@@ -1083,6 +1107,12 @@ func getInterfaceState(ctx context.Context, ifaceType string, iface string, hwad
 func resolveBridge(iface string) string {
 	_, err := os.ReadDir("/sys/class/net/" + iface + "/brif")
 	if err != nil && errors.Is(err, os.ErrNotExist) {
+		return iface
+	}
+
+	// VXLAN bridges have no host-side veth.
+	_, err = os.Stat("/sys/class/net/" + vxlanDeviceName(iface))
+	if err == nil {
 		return iface
 	}
 
@@ -1712,6 +1742,45 @@ func generateNetdevFileContents(networkCfg api.SystemNetworkConfig) ([]networkdC
 		})
 	}
 
+	// Create the VXLAN bridges and their VXLAN devices.
+	for _, v := range networkCfg.VXLANs {
+		buf.Reset()
+
+		err := t.Execute(&buf, netdevFileVariables{
+			Type:         "bridge",
+			Name:         v.Name,
+			MTU:          v.MTU,
+			NoVLANFilter: true,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("12-%s.netdev", v.Name),
+			Contents: buf.String(),
+		})
+
+		buf.Reset()
+
+		err = t.Execute(&buf, netdevFileVariables{
+			Type:       "vxlan",
+			Name:       vxlanDeviceName(v.Name),
+			MTU:        v.MTU,
+			VXLANLocal: v.Local,
+			VXLANPort:  vxlanPort(v),
+			VXLANVNI:   v.VNI,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("12-%s.netdev", vxlanDeviceName(v.Name)),
+			Contents: buf.String(),
+		})
+	}
+
 	// Create wireguard.
 	for i, w := range networkCfg.Wireguard {
 		buf.Reset()
@@ -2097,11 +2166,53 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 		})
 	}
 
+	// Create network for each VXLAN bridge and its VXLAN port. Learning on the port moves the MAC of a
+	// migrated instance off its old port.
+	for _, v := range networkCfg.VXLANs {
+		vrf := ""
+		if v.VRF != "" {
+			vrf = "VRF=" + v.VRF + "\n"
+		}
+
+		buf.Reset()
+		_, _ = buf.WriteString("[Match]\nName=" + v.Name + "\n\n[Link]\nRequiredForOnline=no\n\n[Network]\n" + vrf + "LinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n")
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("26-%s.network", v.Name),
+			Contents: buf.String(),
+		})
+
+		buf.Reset()
+		_, _ = buf.WriteString("[Match]\nName=" + vxlanDeviceName(v.Name) + "\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nBridge=" + v.Name + "\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n\n[Bridge]\nLearning=yes\n")
+
+		ret = append(ret, networkdConfigFile{
+			Name:     fmt.Sprintf("26-%s.network", vxlanDeviceName(v.Name)),
+			Contents: buf.String(),
+		})
+	}
+
 	return ret, nil
 }
 
 // wireguardBaseTable is the routing table and firewall mark of the first WireGuard interface.
 const wireguardBaseTable = 51820
+
+// vxlanDefaultPort is the IANA assigned VXLAN port.
+const vxlanDefaultPort = 4789
+
+// vxlanPort returns the UDP port of a VXLAN.
+func vxlanPort(vxlan api.SystemNetworkVXLAN) int {
+	if vxlan.Port == 0 {
+		return vxlanDefaultPort
+	}
+
+	return vxlan.Port
+}
+
+// vxlanDeviceName returns the name of the VXLAN device attached to a VXLAN bridge.
+func vxlanDeviceName(name string) string {
+	return "_x" + name
+}
 
 // wireguardBaseRulePriority is the priority of the first WireGuard routing policy rule, ahead of the main table.
 const wireguardBaseRulePriority = 30000
@@ -2303,6 +2414,25 @@ func cleanupStaleDevices(ctx context.Context, oldCfg *api.SystemNetworkConfig, n
 			return v.Name == oldVRF.Name && v.Table == oldVRF.Table
 		}) {
 			deleteInterfaces = append(deleteInterfaces, oldVRF.Name)
+		}
+	}
+
+	// Check for changed/deleted VXLANs. networkd can't change the address, port or VNI of an existing
+	// VXLAN device, while the bridge is kept so that attached instances stay connected.
+	for _, oldVXLAN := range oldCfg.VXLANs {
+		newIndex := slices.IndexFunc(newCfg.VXLANs, func(v api.SystemNetworkVXLAN) bool {
+			return v.Name == oldVXLAN.Name
+		})
+
+		if newIndex < 0 {
+			deleteInterfaces = append(deleteInterfaces, vxlanDeviceName(oldVXLAN.Name), oldVXLAN.Name)
+
+			continue
+		}
+
+		newVXLAN := newCfg.VXLANs[newIndex]
+		if newVXLAN.Local != oldVXLAN.Local || vxlanPort(newVXLAN) != vxlanPort(oldVXLAN) || newVXLAN.VNI != oldVXLAN.VNI {
+			deleteInterfaces = append(deleteInterfaces, vxlanDeviceName(oldVXLAN.Name))
 		}
 	}
 

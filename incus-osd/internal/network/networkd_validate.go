@@ -513,6 +513,13 @@ func validateVRFs(cfg *api.SystemNetworkConfig) error {
 		}
 	}
 
+	for _, vxlan := range cfg.VXLANs {
+		err := checkMember("vxlan", vxlan.Name, vxlan.VRF, nil)
+		if err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -794,3 +801,100 @@ var (
 	linkSpeedModeRegex = regexp.MustCompile(`^[0-9]+base[a-z0-9-]+-(half|full|fec)$`)
 	linkOtherModes     = []string{"pause", "asym-pause", "autonegotiation", "tp", "aui", "mii", "fibre", "bnc", "backplane", "fec-none", "fec-rs", "fec-baser", "fec-llrs"}
 )
+
+// staticHostAddresses returns the static addresses of the default VRF, where VXLAN devices listen.
+func staticHostAddresses(cfg *api.SystemNetworkConfig) []netip.Addr {
+	addresses := []string{}
+
+	for _, iface := range cfg.Interfaces {
+		if iface.VRF == "" {
+			addresses = append(addresses, iface.Addresses...)
+		}
+	}
+
+	for _, bond := range cfg.Bonds {
+		if bond.VRF == "" {
+			addresses = append(addresses, bond.Addresses...)
+		}
+	}
+
+	for _, vlan := range cfg.VLANs {
+		if vlan.VRF == "" {
+			addresses = append(addresses, vlan.Addresses...)
+		}
+	}
+
+	if cfg.Loopback != nil {
+		addresses = append(addresses, cfg.Loopback.Addresses...)
+	}
+
+	ret := []netip.Addr{}
+
+	for _, address := range addresses {
+		prefix, err := netip.ParsePrefix(address)
+		if err != nil {
+			continue
+		}
+
+		ret = append(ret, prefix.Addr())
+	}
+
+	return ret
+}
+
+func validateVXLANs(cfg *api.SystemNetworkConfig) error {
+	hostAddresses := staticHostAddresses(cfg)
+
+	// VXLAN devices with a fixed VNI can share an address and port, as long as each VNI is used only once
+	// per port.
+	portVNIs := []string{}
+
+	for index, vxlan := range cfg.VXLANs {
+		err := validateName(vxlan.Name)
+		if err != nil {
+			return fmt.Errorf("vxlan %d %s", index, err.Error())
+		}
+
+		local, err := netip.ParseAddr(vxlan.Local)
+		if err != nil {
+			return fmt.Errorf("vxlan %d invalid local address '%s'", index, vxlan.Local)
+		}
+
+		if !slices.Contains(hostAddresses, local) {
+			return fmt.Errorf("vxlan %d local address '%s' isn't a static address of the host outside of a vrf", index, vxlan.Local)
+		}
+
+		if vxlan.Port < 0 || vxlan.Port > 65535 {
+			return fmt.Errorf("vxlan %d port %d out of range", index, vxlan.Port)
+		}
+
+		if vxlan.VNI < 1 || vxlan.VNI > 16777215 {
+			return fmt.Errorf("vxlan %d vni %d must be between 1 and 16777215", index, vxlan.VNI)
+		}
+
+		portVNI := fmt.Sprintf("%d/%d", vxlanPort(vxlan), vxlan.VNI)
+		if slices.Contains(portVNIs, portVNI) {
+			return fmt.Errorf("vxlan %d vni %d is already used by another vxlan on port %d", index, vxlan.VNI, vxlanPort(vxlan))
+		}
+
+		portVNIs = append(portVNIs, portVNI)
+
+		err = validateMTU(vxlan.MTU)
+		if err != nil {
+			return fmt.Errorf("vxlan %d %s", index, err.Error())
+		}
+
+		for _, source := range vxlan.FirewallSources {
+			_, err := netip.ParsePrefix(source)
+			if err != nil {
+				_, err = netip.ParseAddr(source)
+			}
+
+			if err != nil {
+				return fmt.Errorf("vxlan %d invalid firewall source '%s'", index, source)
+			}
+		}
+	}
+
+	return nil
+}

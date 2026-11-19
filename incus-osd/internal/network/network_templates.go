@@ -28,6 +28,11 @@ type netdevFileVariables struct {
 	WGFirewallMark int
 	WGPeers        []api.SystemNetworkWireguardPeer
 	VRFTable       int
+	MTU            int
+	NoVLANFilter   bool
+	VXLANLocal     string
+	VXLANPort      int
+	VXLANVNI       int
 }
 
 type networkFileVariables struct {

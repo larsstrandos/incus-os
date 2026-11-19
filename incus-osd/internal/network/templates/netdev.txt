@@ -3,9 +3,11 @@ Name={{.Name}}
 Kind={{.Type}}
 {{- if .Hwaddr}}
 MACAddress={{.Hwaddr}}{{end}}
+{{- if .MTU}}
+MTUBytes={{.MTU}}{{end}}
 
 {{if eq .Type "bridge"}}[Bridge]
-VLANFiltering=true
+VLANFiltering={{if .NoVLANFilter}}false{{else}}true{{end}}
   {{- if .Bridge}}
     {{- if .Bridge.DisableMulticastSnooping}}
 MulticastSnooping=false
@@ -44,6 +46,12 @@ DownDelaySec={{.DownDelay}}ms
   {{- end}}
 {{- else if eq .Type "vlan"}}[VLAN]
 Id={{.VLANID}}
+{{- else if eq .Type "vxlan"}}[VXLAN]
+Local={{.VXLANLocal}}
+DestinationPort={{.VXLANPort}}
+VNI={{.VXLANVNI}}
+Independent=yes
+MacLearning=no
 {{- else if eq .Type "vrf"}}[VRF]
 Table={{.VRFTable}}
 {{- else if eq .Type "wireguard"}}[WireGuard]

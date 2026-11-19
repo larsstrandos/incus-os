@@ -1175,3 +1175,110 @@ func TestVRFConfig(t *testing.T) {
 	cfg.VRFs[0].Addresses = []string{"10.255.1.0/24"}
 	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vrf 0 address 0 '10.255.1.0/24' must be a /32 or /128")
 }
+
+func TestVXLANConfig(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() api.SystemNetworkConfig {
+		return api.SystemNetworkConfig{
+			Interfaces: []api.SystemNetworkInterface{
+				{Name: "mgmt", Hwaddr: "AA:BB:CC:DD:EE:01", Addresses: []string{"10.0.0.10/24"}, Roles: []string{"management", "cluster"}},
+				{Name: "uplink0", Hwaddr: "AA:BB:CC:DD:EE:02", IPv6LinkLocal: true, VRF: "cust"},
+			},
+			Loopback: &api.SystemNetworkLoopback{Addresses: []string{"10.255.0.11/32"}},
+			VRFs:     []api.SystemNetworkVRF{{Name: "cust", Table: 100, Addresses: []string{"10.255.1.11/32"}}},
+			VXLANs:   []api.SystemNetworkVXLAN{{Name: "blue", Local: "10.255.0.11", MTU: 1500, VNI: 10100}},
+		}
+	}
+
+	cfg := newCfg()
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	netdevs, err := generateNetdevFileContents(cfg)
+	require.NoError(t, err)
+
+	contents := map[string]string{}
+	for _, netdev := range netdevs {
+		contents[netdev.Name] = netdev.Contents
+	}
+
+	require.Equal(t, "[NetDev]\nName=blue\nKind=bridge\nMTUBytes=1500\n\n[Bridge]\nVLANFiltering=false\n", contents["12-blue.netdev"])
+	require.Equal(t, "[NetDev]\nName=_xblue\nKind=vxlan\nMTUBytes=1500\n\n[VXLAN]\nLocal=10.255.0.11\nDestinationPort=4789\nVNI=10100\nIndependent=yes\nMacLearning=no\n", contents["12-_xblue.netdev"])
+	require.Contains(t, contents["10-mgmt.netdev"], "VLANFiltering=true")
+
+	// Several VXLANs share the address and port, each with its own VNI.
+	cfg = newCfg()
+	cfg.VXLANs = append(cfg.VXLANs, api.SystemNetworkVXLAN{Name: "red", Local: "10.255.0.11", VNI: 10200})
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	// Bad configurations.
+	cfg = newCfg()
+	cfg.VXLANs[0].Local = "10.255.1.11"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 0 local address '10.255.1.11' isn't a static address of the host outside of a vrf")
+
+	cfg = newCfg()
+	cfg.VXLANs[0].VNI = 0
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 0 vni 0 must be between 1 and 16777215")
+
+	cfg = newCfg()
+	cfg.VXLANs[0].VNI = 16777216
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 0 vni 16777216 must be between 1 and 16777215")
+
+	cfg = newCfg()
+	cfg.VXLANs = append(cfg.VXLANs, api.SystemNetworkVXLAN{Name: "red", Local: "10.255.0.11", VNI: 10100})
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 1 vni 10100 is already used by another vxlan on port 4789")
+
+	cfg = newCfg()
+	cfg.VXLANs[0].Name = "mgmt"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "duplicate interface/bond/vlan/wireguard/vrf/vxlan name: mgmt")
+
+	cfg = newCfg()
+	cfg.VXLANs[0].FirewallSources = []string{"10.255.0.0/33"}
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 0 invalid firewall source '10.255.0.0/33'")
+
+	cfg = newCfg()
+	cfg.VXLANs[0].VRF = "missing"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 'blue' vrf 'missing' doesn't exist")
+}
+
+func TestVXLANSingleVNIConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := api.SystemNetworkConfig{
+		Interfaces: []api.SystemNetworkInterface{
+			{Name: "mgmt", Hwaddr: "AA:BB:CC:DD:EE:01", Addresses: []string{"10.0.0.10/24"}, Roles: []string{"management", "cluster"}},
+		},
+		Loopback: &api.SystemNetworkLoopback{Addresses: []string{"10.255.0.11/32"}},
+		VRFs:     []api.SystemNetworkVRF{{Name: "cust", Table: 100}},
+		VXLANs: []api.SystemNetworkVXLAN{
+			{Name: "blue", Local: "10.255.0.11", VNI: 10100},
+			{Name: "l3cust", Local: "10.255.0.11", VNI: 50100, VRF: "cust"},
+		},
+	}
+
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	netdevs, err := generateNetdevFileContents(cfg)
+	require.NoError(t, err)
+
+	contents := map[string]string{}
+	for _, netdev := range netdevs {
+		contents[netdev.Name] = netdev.Contents
+	}
+
+	require.Equal(t, "[NetDev]\nName=blue\nKind=bridge\n\n[Bridge]\nVLANFiltering=false\n", contents["12-blue.netdev"])
+	require.Equal(t, "[NetDev]\nName=_xblue\nKind=vxlan\n\n[VXLAN]\nLocal=10.255.0.11\nDestinationPort=4789\nVNI=10100\nIndependent=yes\nMacLearning=no\n", contents["12-_xblue.netdev"])
+	require.Contains(t, contents["12-_xl3cust.netdev"], "\nVNI=50100\n")
+
+	networks, err := generateNetworkFileContents(context.TODO(), cfg)
+	require.NoError(t, err)
+
+	contents = map[string]string{}
+	for _, network := range networks {
+		contents[network.Name] = network.Contents
+	}
+
+	require.NotContains(t, contents["26-blue.network"], "VRF=")
+	require.Equal(t, "[Match]\nName=_xblue\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nBridge=blue\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n\n[Bridge]\nLearning=yes\n", contents["26-_xblue.network"])
+	require.Equal(t, "[Match]\nName=l3cust\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nVRF=cust\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n", contents["26-l3cust.network"])
+}
