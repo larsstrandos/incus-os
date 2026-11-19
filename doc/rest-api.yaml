@@ -656,6 +656,9 @@ definitions:
                     type: integer
                 type: array
                 x-go-name: VLANTags
+            vrf:
+                type: string
+                x-go-name: VRF
         title: SystemNetworkBond contains information about a network bond.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
@@ -747,6 +750,11 @@ definitions:
                     $ref: '#/definitions/SystemNetworkVLAN'
                 type: array
                 x-go-name: VLANs
+            vrfs:
+                items:
+                    $ref: '#/definitions/SystemNetworkVRF'
+                type: array
+                x-go-name: VRFs
             wireguard:
                 items:
                     $ref: '#/definitions/SystemNetworkWireguard'
@@ -906,6 +914,9 @@ definitions:
                     type: integer
                 type: array
                 x-go-name: VLANTags
+            vrf:
+                type: string
+                x-go-name: VRF
         title: SystemNetworkInterface contains information about a network interface.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
@@ -1164,7 +1175,29 @@ definitions:
                     $ref: '#/definitions/SystemNetworkRoute'
                 type: array
                 x-go-name: Routes
+            vrf:
+                type: string
+                x-go-name: VRF
         title: SystemNetworkVLAN contains information about a network vlan.
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemNetworkVRF:
+        properties:
+            addresses:
+                description: Additional /32 or /128 addresses of the VRF device, acting as the loopback of the VRF.
+                items:
+                    type: string
+                type: array
+                x-go-name: Addresses
+            name:
+                type: string
+                x-go-name: Name
+            table:
+                description: Routing table used by the VRF.
+                format: int64
+                type: integer
+                x-go-name: Table
+        title: SystemNetworkVRF contains information about a VRF (virtual routing and forwarding) device.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemNetworkWireguard:

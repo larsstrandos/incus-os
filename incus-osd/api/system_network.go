@@ -53,6 +53,17 @@ type SystemNetworkConfig struct {
 	VLANs      []SystemNetworkVLAN      `json:"vlans,omitempty"      yaml:"vlans,omitempty"`
 	Wireguard  []SystemNetworkWireguard `json:"wireguard,omitempty"  yaml:"wireguard,omitempty"`
 	Loopback   *SystemNetworkLoopback   `json:"loopback,omitempty"   yaml:"loopback,omitempty"`
+	VRFs       []SystemNetworkVRF       `json:"vrfs,omitempty"       yaml:"vrfs,omitempty"`
+}
+
+// SystemNetworkVRF contains information about a VRF (virtual routing and forwarding) device.
+type SystemNetworkVRF struct {
+	// Additional /32 or /128 addresses of the VRF device, acting as the loopback of the VRF.
+	Addresses []string `json:"addresses,omitempty" yaml:"addresses,omitempty"`
+	Name      string   `json:"name"                yaml:"name"`
+
+	// Routing table used by the VRF.
+	Table int `json:"table" yaml:"table"`
 }
 
 // SystemNetworkLoopback contains the additional addresses of the loopback interface.
@@ -76,6 +87,7 @@ type SystemNetworkInterface struct {
 	Routes            []SystemNetworkRoute        `json:"routes,omitempty"              yaml:"routes,omitempty"`
 	StrictHwaddr      bool                        `json:"strict_hwaddr,omitempty"       yaml:"strict_hwaddr,omitempty"`
 	VLANTags          []int                       `json:"vlan_tags,omitempty"           yaml:"vlan_tags,omitempty"`
+	VRF               string                      `json:"vrf,omitempty"                 yaml:"vrf,omitempty"`
 }
 
 // SystemNetworkBond contains information about a network bond.
@@ -96,6 +108,7 @@ type SystemNetworkBond struct {
 	Roles             []string                    `json:"roles,omitempty"               yaml:"roles,omitempty"`
 	Routes            []SystemNetworkRoute        `json:"routes,omitempty"              yaml:"routes,omitempty"`
 	VLANTags          []int                       `json:"vlan_tags,omitempty"           yaml:"vlan_tags,omitempty"`
+	VRF               string                      `json:"vrf,omitempty"                 yaml:"vrf,omitempty"`
 }
 
 // SystemNetworkBondOptions contains link monitoring and tuning options for a network bond.
@@ -121,6 +134,7 @@ type SystemNetworkVLAN struct {
 	RequiredForOnline string                      `json:"required_for_online,omitempty" yaml:"required_for_online,omitempty"`
 	Roles             []string                    `json:"roles,omitempty"               yaml:"roles,omitempty"`
 	Routes            []SystemNetworkRoute        `json:"routes,omitempty"              yaml:"routes,omitempty"`
+	VRF               string                      `json:"vrf,omitempty"                 yaml:"vrf,omitempty"`
 }
 
 // SystemNetworkBridge contains configuration for the bridge that is automatically created on top of an interface or bond.
