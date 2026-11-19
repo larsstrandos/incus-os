@@ -58,6 +58,8 @@ The following top-level network configuration options can be set:
 
 * `loopback`: Optionally, additional `/32` and `/128` addresses for the loopback interface.
 
+* `vrfs`: Zero or more VRFs (virtual routing and forwarding) that should be configured for the system.
+
 * `dns`: Optionally, configure custom DNS information for the system.
 
 * `proxy`: Optionally, configure a proxy for the system.
@@ -117,6 +119,25 @@ The bridge created on top of an interface or bond only lets through traffic with
 ### Strict hardware address filtering
 
 Interfaces accept a `strict_hwaddr` option. If `true`, IncusOS only lets traffic using the interface's own hardware address go out through the physical device. This is useful on networks that don't tolerate additional hardware addresses on a port, but it prevents instances bridged to that interface from reaching the network.
+
+### VRFs
+
+A VRF is a separate routing table with its own set of interfaces. Each entry of `vrfs` consists of:
+
+* `name`: The name of the VRF device.
+
+* `table`: The routing table of the VRF. Tables 253, 254 and 255 are reserved, as are the tables used for WireGuard default routes (starting at 51820).
+
+* `addresses`: Optionally, `/32` and `/128` addresses for the VRF device, acting as the loopback of the VRF.
+
+Interfaces, bonds and VLANs are put into a VRF by setting their `vrf` option to the name of the VRF. Their addresses and routes then belong to the VRF and its table.
+A VLAN doesn't have to be in the same VRF as its parent.
+
+Interfaces with the `management` or `cluster` role can't be in a VRF, as the services of IncusOS itself only run in the default VRF.
+Interfaces in a VRF also aren't picked when IncusOS automatically assigns the `management` role.
+
+Incus routed NICs can be put into a VRF with their `vrf` option. Unless `ipv4.host_tables` and `ipv6.host_tables` are set to the table of the VRF, Incus also adds the host routes of the NIC to the main table.
+When a VRF is removed or its table changed, IncusOS recreates the VRF device and Incus NICs have to be restarted to join it again.
 
 ### `required_for_online` values
 
@@ -220,6 +241,36 @@ config:
 ```
 
 Interfaces, bonds and VLANs with `ipv6_link_local` and no addresses aren't required for the system to be online.
+
+#### VRF
+
+Keep a fabric uplink in the default VRF, and put a VLAN on it and a second uplink into the `cust` VRF:
+
+```yaml
+config:
+  vrfs:
+  - name: "cust"
+    table: 100
+    addresses:
+    - "10.255.1.11/32"
+    - "2001:db8:c0::11/128"
+
+  interfaces:
+  - name: "uplink0"
+    hwaddr: "enp5s0"
+    ipv6_link_local: true
+  - name: "uplink1"
+    hwaddr: "enp6s0"
+    ipv6_link_local: true
+    vrf: "cust"
+
+  vlans:
+  - name: "c0"
+    parent: "uplink0"
+    id: 100
+    ipv6_link_local: true
+    vrf: "cust"
+```
 
 #### Automatic roll back of network configuration
 
