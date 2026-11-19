@@ -35,6 +35,7 @@ ECDSA
 EFI
 EOF
 ESXi
+EVPN
 FAT
 fibre
 formatters
@@ -173,10 +174,14 @@ VirtualBox
 VLAN
 VLANs
 VMware
+VNI
 VPN
 VRF
 VRFs
 vSphere
+VTEP
+VXLAN
+VXLANs
 WireGuard
 WWN
 Xen

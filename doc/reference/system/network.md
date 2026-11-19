@@ -60,6 +60,8 @@ The following top-level network configuration options can be set:
 
 * `vrfs`: Zero or more VRFs (virtual routing and forwarding) that should be configured for the system.
 
+* `vxlans`: Zero or more VXLAN bridges whose forwarding is controlled by a routing daemon, for example BGP EVPN.
+
 * `dns`: Optionally, configure custom DNS information for the system.
 
 * `proxy`: Optionally, configure a proxy for the system.
@@ -139,6 +141,48 @@ Interfaces in a VRF also aren't picked when IncusOS automatically assigns the `m
 Incus routed NICs can be put into a VRF with their `vrf` option. Unless `ipv4.host_tables` and `ipv6.host_tables` are set to the table of the VRF, Incus also adds the host routes of the NIC to the main table.
 When a VRF is removed or its table changed, IncusOS recreates the VRF device and Incus NICs have to be restarted to join it again.
 
+### VXLANs
+
+A VXLAN bridge connects Incus instances on different hosts in the same layer 2 network over a routed network, one
+bridge per VXLAN network identifier (VNI). IncusOS only creates the devices. Which remote hosts and MAC addresses belong
+to a VNI is left to a routing daemon, such as BGP EVPN in the `bird` application. Each entry of `vxlans` consists of:
+
+* `name`: The name of the bridge that instances attach to.
+
+* `vni`: The VXLAN network identifier the bridge carries.
+
+* `local`: The local VXLAN tunnel endpoint (VTEP) address. It must be a static address of the host outside of a VRF, usually
+  a `loopback` address that the routing daemon announces.
+
+* `port`: Optionally, the UDP port (defaults to 4789, the port switches use).
+
+* `mtu`: Optionally, the MTU of the bridge and its VXLAN port. It must leave room for the 50 bytes of VXLAN encapsulation
+  (70 bytes over IPv6) within the MTU of the routed network.
+
+* `firewall_sources`: Optionally, addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules,
+  usually the VTEP addresses of the other hosts.
+
+* `vrf`: Optionally, the VRF the bridge is put in, for example for the layer 3 VNI of a VRF in BGP EVPN.
+
+The bridge has no VLAN filtering and no addresses, and tagged traffic from instances passes through it unchanged. Its
+VXLAN port `_x<name>` uses the fixed VNI, with bridge learning on. The VXLANs share the same `local` address and `port`,
+like the VXLAN interface of a switch, as long as each `vni` is used once per port. With BIRD, each bridge gets a
+`bridge` and an `evpn` protocol:
+
+    protocol bridge { eth { table etab_blue; }; bridge device "blue"; }
+    protocol evpn blue {
+      eth { table etab_blue; }; evpn { table evpntab; };
+      rd 10.255.0.11:10100; route target (rt, 65000, 10100);
+      encapsulation vxlan { tunnel device "_xblue"; router address 10.255.0.11; };
+      vni 10100;
+    }
+
+Incus instances are attached with a bridged NIC without a VLAN, for example
+`incus config device add c1 eth1 nic nictype=bridged parent=blue`.
+
+When the address, port or VNI of a VXLAN changes, IncusOS recreates its VXLAN port. The bridge is kept, so instances stay
+attached.
+
 ### `required_for_online` values
 
 Network interfaces, bonds, VLANs, and WireGuard interfaces can optionally be configured with the `required_for_online` option that IncusOS will use to determine when that network device is online. Valid values include `ipv4`, `ipv6`, `both`, `any`, and `no`. If not specified, defaults to `any`. For further details, refer to systemd's [`RequiredFamilyForOnline` networkctl configuration option](https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html#RequiredFamilyForOnline=).
@@ -156,7 +200,8 @@ This is done by setting the `firewall_rules` option to a list of rules, each of 
 
 * `port`: Optional; the destination port to match. Must be set together with `protocol`.
 
-On top of the user provided rules, IncusOS will always allow a subset of basic rules (`icmp`, `icmpv6` and established connections).
+On top of the user provided rules, IncusOS will always allow a subset of basic rules (`icmp`, `icmpv6` and established connections),
+as well as VXLAN traffic from the `firewall_sources` of each VXLAN.
 
 ### Routing
 
