@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"regexp"
 	"slices"
 	"strconv"
@@ -400,6 +401,37 @@ func validateName(name string) error {
 
 	if len(name) > 13 {
 		return errors.New("name '" + name + "' cannot be longer than 13 characters")
+	}
+
+	if name == "lo" {
+		return errors.New("name 'lo' is reserved for the loopback interface")
+	}
+
+	return nil
+}
+
+func validateLoopback(loopback *api.SystemNetworkLoopback) error {
+	if loopback == nil {
+		return nil
+	}
+
+	for index, address := range loopback.Addresses {
+		prefix, err := netip.ParsePrefix(address)
+		if err != nil {
+			return fmt.Errorf("loopback address %d invalid IP address '%s', must provide a CIDR mask", index, address)
+		}
+
+		if prefix.Bits() != prefix.Addr().BitLen() {
+			return fmt.Errorf("loopback address %d '%s' must be a /32 or /128", index, address)
+		}
+
+		if prefix.Addr().IsLoopback() || prefix.Addr().IsLinkLocalUnicast() {
+			return fmt.Errorf("loopback address %d '%s' is reserved", index, address)
+		}
+
+		if slices.Contains(loopback.Addresses[:index], address) {
+			return fmt.Errorf("loopback address %d '%s' is a duplicate", index, address)
+		}
 	}
 
 	return nil

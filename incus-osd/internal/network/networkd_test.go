@@ -1076,3 +1076,26 @@ func TestValidateAdvertiseModes(t *testing.T) {
 		require.Error(t, validateEthernet(&api.SystemNetworkEthernet{Advertise: []string{mode}}), mode)
 	}
 }
+
+func TestLoopbackConfig(t *testing.T) {
+	t.Parallel()
+
+	cfg := api.SystemNetworkConfig{Loopback: &api.SystemNetworkLoopback{Addresses: []string{"10.255.0.11/32", "2001:db8::11/128"}}}
+
+	err := ValidateNetworkConfiguration(context.TODO(), &cfg, true)
+	require.NoError(t, err)
+
+	cfgs, err := generateNetworkFileContents(context.TODO(), cfg)
+	require.NoError(t, err)
+	require.Len(t, cfgs, 1)
+	require.Equal(t, "24-lo.network", cfgs[0].Name)
+	require.Equal(t, "[Match]\nName=lo\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nAddress=10.255.0.11/32\nAddress=2001:db8::11/128\n", cfgs[0].Contents)
+
+	cfg.Loopback.Addresses = []string{"10.255.0.0/24"}
+	err = ValidateNetworkConfiguration(context.TODO(), &cfg, true)
+	require.EqualError(t, err, "loopback address 0 '10.255.0.0/24' must be a /32 or /128")
+
+	cfg.Loopback.Addresses = []string{"127.0.0.2/32"}
+	err = ValidateNetworkConfiguration(context.TODO(), &cfg, true)
+	require.EqualError(t, err, "loopback address 0 '127.0.0.2/32' is reserved")
+}

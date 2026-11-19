@@ -306,6 +306,10 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 		numIPs += len(wg.Addresses)
 	}
 
+	if networkCfg.Loopback != nil {
+		numIPs += len(networkCfg.Loopback.Addresses)
+	}
+
 	if numIPs == 0 {
 		return errors.New("zero IP addresses are configured")
 	}
@@ -330,6 +334,11 @@ func ValidateNetworkConfiguration(ctx context.Context, networkCfg *api.SystemNet
 	}
 
 	err = validateWireguard(networkCfg)
+	if err != nil {
+		return err
+	}
+
+	err = validateLoopback(networkCfg.Loopback)
 	if err != nil {
 		return err
 	}
@@ -426,6 +435,16 @@ func UpdateNetworkState(ctx context.Context, n *api.SystemNetwork) error {
 		wgState.Roles = wg.Roles
 		rolesFound = append(rolesFound, wg.Roles...)
 		n.State.Interfaces[wg.Name] = wgState
+	}
+
+	// State update for loopback.
+	if n.Config.Loopback != nil && len(n.Config.Loopback.Addresses) > 0 {
+		loState, err := getInterfaceState(ctx, "loopback", "lo", "", "", nil)
+		if err != nil {
+			return err
+		}
+
+		n.State.Interfaces["lo"] = loState
 	}
 
 	// Ensure required roles exist.
@@ -908,7 +927,7 @@ func getInterfaceState(ctx context.Context, ifaceType string, iface string, hwad
 	switch ifaceType {
 	case "interface", "bond_member":
 		underlyingDevice = "_p" + strings.ToLower(strings.ReplaceAll(hwaddr, ":", ""))
-	case "bond", "physical":
+	case "bond", "physical", "loopback":
 		underlyingDevice = iface
 	case "vlan":
 		if hwaddr == "" {
@@ -1935,6 +1954,21 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 
 		ret = append(ret, networkdConfigFile{
 			Name:     fmt.Sprintf("23-%s.network", wg.Name),
+			Contents: buf.String(),
+		})
+	}
+
+	// Create network for the loopback, leaving the kernel's own addresses alone.
+	if networkCfg.Loopback != nil && len(networkCfg.Loopback.Addresses) > 0 {
+		buf.Reset()
+		_, _ = buf.WriteString("[Match]\nName=lo\n\n[Link]\nRequiredForOnline=no\n\n[Network]\n")
+
+		for _, address := range networkCfg.Loopback.Addresses {
+			_, _ = buf.WriteString("Address=" + address + "\n")
+		}
+
+		ret = append(ret, networkdConfigFile{
+			Name:     "24-lo.network",
 			Contents: buf.String(),
 		})
 	}
