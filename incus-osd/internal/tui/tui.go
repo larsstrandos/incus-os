@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -398,6 +399,22 @@ func (t *TUI) getIPAddresses() []string {
 	for _, w := range t.state.System.Network.Config.Wireguard {
 		if len(w.Addresses) > 0 {
 			appendIPs(w.Name)
+		}
+	}
+
+	// Only show the configured loopback addresses, not the kernel's own 127.0.0.1 and ::1.
+	if t.state.System.Network.Config.Loopback != nil && len(t.state.System.Network.Config.Loopback.Addresses) > 0 {
+		addrs, err := network.GetIPAddresses(context.Background(), "lo")
+		if err == nil {
+			addrs = slices.DeleteFunc(addrs, func(addr string) bool {
+				ip, err := netip.ParseAddr(addr)
+
+				return err == nil && ip.IsLoopback()
+			})
+
+			if len(addrs) > 0 {
+				ret = append(ret, "lo("+strings.Join(addrs, ", ")+")")
+			}
 		}
 	}
 
