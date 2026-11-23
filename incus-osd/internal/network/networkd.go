@@ -1749,7 +1749,7 @@ func generateNetdevFileContents(networkCfg api.SystemNetworkConfig) ([]networkdC
 	}
 
 	// Create the VXLAN bridges and their VXLAN devices.
-	for _, v := range networkCfg.VXLANs {
+	for _, v := range networkCfg.EffectiveVXLANs() {
 		buf.Reset()
 
 		err := t.Execute(&buf, netdevFileVariables{
@@ -2174,7 +2174,7 @@ func generateNetworkFileContents(ctx context.Context, networkCfg api.SystemNetwo
 
 	// Create network for each VXLAN bridge and its VXLAN port. Learning on the port moves the MAC of a
 	// migrated instance off its old port.
-	for _, v := range networkCfg.VXLANs {
+	for _, v := range networkCfg.EffectiveVXLANs() {
 		vrf := ""
 		if v.VRF != "" {
 			vrf = "VRF=" + v.VRF + "\n"
@@ -2425,8 +2425,11 @@ func cleanupStaleDevices(ctx context.Context, oldCfg *api.SystemNetworkConfig, n
 
 	// Check for changed/deleted VXLANs. networkd can't change the address, port or VNI of an existing
 	// VXLAN device, while the bridge is kept so that attached instances stay connected.
-	for _, oldVXLAN := range oldCfg.VXLANs {
-		newIndex := slices.IndexFunc(newCfg.VXLANs, func(v api.SystemNetworkVXLAN) bool {
+	oldVXLANs := oldCfg.EffectiveVXLANs()
+	newVXLANs := newCfg.EffectiveVXLANs()
+
+	for _, oldVXLAN := range oldVXLANs {
+		newIndex := slices.IndexFunc(newVXLANs, func(v api.SystemNetworkVXLAN) bool {
 			return v.Name == oldVXLAN.Name
 		})
 
@@ -2436,7 +2439,7 @@ func cleanupStaleDevices(ctx context.Context, oldCfg *api.SystemNetworkConfig, n
 			continue
 		}
 
-		newVXLAN := newCfg.VXLANs[newIndex]
+		newVXLAN := newVXLANs[newIndex]
 		if newVXLAN.Local != oldVXLAN.Local || vxlanPort(newVXLAN) != vxlanPort(oldVXLAN) || newVXLAN.VNI != oldVXLAN.VNI {
 			deleteInterfaces = append(deleteInterfaces, vxlanDeviceName(oldVXLAN.Name))
 		}

@@ -239,7 +239,7 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 
 		// Allow VXLAN from the configured sources, VXLAN devices only listen in the default VRF.
 		if vrf == "" {
-			for _, vxlan := range networkCfg.VXLANs {
+			for _, vxlan := range networkCfg.EffectiveVXLANs() {
 				port := vxlan.Port
 				if port == 0 {
 					port = 4789
@@ -421,13 +421,14 @@ func vxlanRules(networkCfg *api.SystemNetworkConfig) [][]string {
 		}
 	}
 
-	if len(underlay) == 0 || len(networkCfg.VXLANs) == 0 {
+	vxlans := networkCfg.EffectiveVXLANs()
+	if len(underlay) == 0 || len(vxlans) == 0 {
 		return nil
 	}
 
 	ports := []string{}
 
-	for _, vxlan := range networkCfg.VXLANs {
+	for _, vxlan := range vxlans {
 		port := strconv.Itoa(vxlanPort(vxlan))
 		if !slices.Contains(ports, port) {
 			ports = append(ports, port)
@@ -443,7 +444,7 @@ func vxlanRules(networkCfg *api.SystemNetworkConfig) [][]string {
 	endpoints := []string{}
 	endpointVNIs := map[string][]string{}
 
-	for _, vxlan := range networkCfg.VXLANs {
+	for _, vxlan := range vxlans {
 		family := "ip"
 		if strings.Contains(vxlan.Local, ":") {
 			family = "ip6"

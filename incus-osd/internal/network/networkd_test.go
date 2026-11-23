@@ -1319,3 +1319,69 @@ func TestVXLANUnderlayConfig(t *testing.T) {
 	cfg.Interfaces[1].VRF = "cust"
 	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "interface 'uplink0' with role 'underlay' cannot be in a vrf")
 }
+
+func TestVTEPConfig(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() api.SystemNetworkConfig {
+		return api.SystemNetworkConfig{
+			Interfaces: []api.SystemNetworkInterface{
+				{Name: "mgmt", Hwaddr: "AA:BB:CC:DD:EE:01", Addresses: []string{"10.0.0.10/24"}, Roles: []string{"management", "cluster"}},
+			},
+			Loopback: &api.SystemNetworkLoopback{Addresses: []string{"10.255.0.11/32"}},
+			VRFs:     []api.SystemNetworkVRF{{Name: "cust", Table: 100}},
+			VTEP:     &api.SystemNetworkVTEP{Local: "10.255.0.11", MTU: 1450, FirewallSources: []string{"10.255.0.0/24"}},
+			VXLANs: []api.SystemNetworkVXLAN{
+				{Name: "blue", VNI: 10100},
+				{Name: "red", VNI: 10200, MTU: 9000, FirewallSources: []string{"10.255.0.12"}},
+				{Name: "l3cust", VNI: 50100, VRF: "cust"},
+				{Name: "green", VNI: 10300, Port: 4790},
+			},
+		}
+	}
+
+	cfg := newCfg()
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	// Only the unset fields are taken from the VTEP.
+	vxlans := cfg.EffectiveVXLANs()
+	require.Equal(t, api.SystemNetworkVXLAN{Name: "blue", Local: "10.255.0.11", MTU: 1450, VNI: 10100, FirewallSources: []string{"10.255.0.0/24"}}, vxlans[0])
+	require.Equal(t, api.SystemNetworkVXLAN{Name: "red", Local: "10.255.0.11", MTU: 9000, VNI: 10200, FirewallSources: []string{"10.255.0.12"}}, vxlans[1])
+	require.Equal(t, 4790, vxlans[3].Port)
+
+	netdevs, err := generateNetdevFileContents(cfg)
+	require.NoError(t, err)
+
+	contents := map[string]string{}
+	for _, netdev := range netdevs {
+		contents[netdev.Name] = netdev.Contents
+	}
+
+	require.Equal(t, "[NetDev]\nName=_xblue\nKind=vxlan\nMTUBytes=1450\n\n[VXLAN]\nLocal=10.255.0.11\nDestinationPort=4789\nVNI=10100\nIndependent=yes\nMacLearning=no\n", contents["12-_xblue.netdev"])
+	require.Equal(t, "[NetDev]\nName=_xgreen\nKind=vxlan\nMTUBytes=1450\n\n[VXLAN]\nLocal=10.255.0.11\nDestinationPort=4790\nVNI=10300\nIndependent=yes\nMacLearning=no\n", contents["12-_xgreen.netdev"])
+
+	// The stored configuration keeps the VXLANs as configured.
+	require.Empty(t, cfg.VXLANs[0].Local)
+
+	// Bad configurations.
+	cfg = newCfg()
+	cfg.VTEP.Local = ""
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 0 has no local address and the vtep has none either")
+
+	cfg = newCfg()
+	cfg.VTEP.Local = "10.255.0.12"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vtep local address '10.255.0.12' isn't a static address of the host outside of a vrf")
+
+	cfg = newCfg()
+	cfg.VTEP.Port = 70000
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vtep port 70000 out of range")
+
+	cfg = newCfg()
+	cfg.VTEP.FirewallSources = []string{"10.255.0.0/33"}
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vtep invalid firewall source '10.255.0.0/33'")
+
+	// The VNIs share the VTEP's port, so each can only be used once.
+	cfg = newCfg()
+	cfg.VXLANs[1].VNI = 10100
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 1 vni 10100 is already used by another vxlan on port 4789")
+}

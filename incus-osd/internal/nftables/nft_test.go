@@ -48,3 +48,24 @@ func TestSourcePrefixes(t *testing.T) {
 	require.Equal(t, []string{"10.0.0.0/16", "192.0.2.1/32"}, sourcePrefixes([]string{"10.0.1.0/24", "10.0.0.0/16", "192.0.2.1", "192.0.2.1/32", "fd00::/64"}, false))
 	require.Equal(t, []string{"fd00::/64"}, sourcePrefixes([]string{"10.0.1.0/24", "fd00::/64", "fd00::5"}, true))
 }
+
+func TestVXLANRulesVTEP(t *testing.T) {
+	t.Parallel()
+
+	cfg := &api.SystemNetworkConfig{
+		Interfaces: []api.SystemNetworkInterface{{Name: "uplink0", Roles: []string{"underlay"}}},
+		VTEP:       &api.SystemNetworkVTEP{Local: "10.255.0.11", FirewallSources: []string{"10.255.0.0/24"}},
+		VXLANs: []api.SystemNetworkVXLAN{
+			{Name: "blue", VNI: 10500},
+			{Name: "red", VNI: 10600, FirewallSources: []string{"10.255.0.12"}},
+		},
+	}
+
+	require.Equal(t, [][]string{
+		{"udp", "dport", "{4789}", "iifname", "!=", "{_vuplink0}", "counter", "drop"},
+		{"meta", "nfproto", "ipv6", "exthdr", "frag", "exists", "udp", "dport", "{4789}", "counter", "drop"},
+		{"ip", "daddr", "10.255.0.11", "udp", "dport", "4789", "@th,96,24", "10500", "ip", "saddr", "!=", "{10.255.0.0/24}", "counter", "drop"},
+		{"ip", "daddr", "10.255.0.11", "udp", "dport", "4789", "@th,96,24", "10600", "ip", "saddr", "!=", "{10.255.0.12/32}", "counter", "drop"},
+		{"ip", "daddr", "10.255.0.11", "udp", "dport", "4789", "@th,96,24", "!=", "{10500,10600}", "counter", "drop"},
+	}, vxlanRules(cfg))
+}

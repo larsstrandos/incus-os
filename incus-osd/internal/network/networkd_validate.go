@@ -896,6 +896,49 @@ func underlayAddresses(cfg *api.SystemNetworkConfig) []netip.Addr {
 	return ret
 }
 
+func validateVTEP(vtep *api.SystemNetworkVTEP, hostAddresses []netip.Addr, underlay []netip.Addr) error {
+	if vtep == nil {
+		return nil
+	}
+
+	if vtep.Local != "" {
+		local, err := netip.ParseAddr(vtep.Local)
+		if err != nil {
+			return fmt.Errorf("vtep invalid local address '%s'", vtep.Local)
+		}
+
+		if !slices.Contains(hostAddresses, local) {
+			return fmt.Errorf("vtep local address '%s' isn't a static address of the host outside of a vrf", vtep.Local)
+		}
+
+		if underlay != nil && !slices.Contains(underlay, local) {
+			return fmt.Errorf("vtep local address '%s' isn't on an underlay interface or the loopback", vtep.Local)
+		}
+	}
+
+	if vtep.Port < 0 || vtep.Port > 65535 {
+		return fmt.Errorf("vtep port %d out of range", vtep.Port)
+	}
+
+	err := validateMTU(vtep.MTU)
+	if err != nil {
+		return fmt.Errorf("vtep %s", err.Error())
+	}
+
+	for _, source := range vtep.FirewallSources {
+		_, err := netip.ParsePrefix(source)
+		if err != nil {
+			_, err = netip.ParseAddr(source)
+		}
+
+		if err != nil {
+			return fmt.Errorf("vtep invalid firewall source '%s'", source)
+		}
+	}
+
+	return nil
+}
+
 func validateVXLANs(cfg *api.SystemNetworkConfig) error {
 	hostAddresses := staticHostAddresses(cfg)
 	underlay := underlayAddresses(cfg)
@@ -904,10 +947,19 @@ func validateVXLANs(cfg *api.SystemNetworkConfig) error {
 	// per port.
 	portVNIs := []string{}
 
-	for index, vxlan := range cfg.VXLANs {
+	err := validateVTEP(cfg.VTEP, hostAddresses, underlay)
+	if err != nil {
+		return err
+	}
+
+	for index, vxlan := range cfg.EffectiveVXLANs() {
 		err := validateName(vxlan.Name)
 		if err != nil {
 			return fmt.Errorf("vxlan %d %s", index, err.Error())
+		}
+
+		if vxlan.Local == "" {
+			return fmt.Errorf("vxlan %d has no local address and the vtep has none either", index)
 		}
 
 		local, err := netip.ParseAddr(vxlan.Local)
