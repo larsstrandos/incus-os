@@ -3306,6 +3306,29 @@ paths:
             summary: Get the license information for a component
             tags:
                 - licenses
+    /1.0/metrics:
+        get:
+            description: |-
+                Returns IncusOS metrics in the Prometheus/OpenMetrics text format.
+                All metric names are prefixed with "incusos_".
+            operationId: metrics_get
+            produces:
+                - text/plain
+                - application/openmetrics-text
+            responses:
+                "200":
+                    description: Metrics
+                    schema:
+                        example: |-
+                            # HELP incusos_update_needs_reboot Whether an update has been applied that requires a reboot (1) or not (0).
+                            # TYPE incusos_update_needs_reboot gauge
+                            incusos_update_needs_reboot 0
+                        type: string
+                "500":
+                    $ref: '#/responses/InternalServerError'
+            summary: Get metrics
+            tags:
+                - metrics
     /1.0/services:
         get:
             description: Returns a list of currently available services (URLs).
