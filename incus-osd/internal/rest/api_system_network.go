@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lxc/incus-os/incus-osd/api"
+	"github.com/lxc/incus-os/incus-osd/internal/applications"
 	"github.com/lxc/incus-os/incus-osd/internal/network"
 	"github.com/lxc/incus-os/incus-osd/internal/nftables"
 	"github.com/lxc/incus-os/incus-osd/internal/providers"
@@ -233,6 +234,14 @@ func (s *Server) apiSystemNetwork(w http.ResponseWriter, r *http.Request) {
 			applyTimeout = confirmationTimeout
 		}
 
+		// The EVPN settings of the BIRD application are built on the VXLANs.
+		err = applications.ValidateBirdEVPN(s.state, newConfig.Config)
+		if err != nil {
+			_ = response.BadRequest(err).Render(w)
+
+			return
+		}
+
 		slog.InfoContext(r.Context(), "Applying new network configuration")
 
 		err = applyNetworkConfiguration(r.Context(), s.state, newConfig.Config, applyTimeout)
@@ -264,6 +273,12 @@ func applyNetworkConfiguration(ctx context.Context, s *state.State, networkCfg *
 	err = network.ApplyNetworkConfiguration(ctx, s, networkCfg, timeout, false, providers.Notify, false)
 	if err != nil {
 		return err
+	}
+
+	// Regenerate the EVPN part of the BIRD configuration for the new VXLANs.
+	err = applications.RefreshBirdEVPN(ctx, s)
+	if err != nil {
+		slog.WarnContext(ctx, "Failed to update the BIRD EVPN configuration: "+err.Error())
 	}
 
 	return s.Save()
