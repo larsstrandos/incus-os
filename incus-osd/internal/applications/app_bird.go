@@ -16,6 +16,7 @@ import (
 	"github.com/lxc/incus-os/incus-osd/api"
 	"github.com/lxc/incus-os/incus-osd/internal/nftables"
 	"github.com/lxc/incus-os/incus-osd/internal/rest/response"
+	"github.com/lxc/incus-os/incus-osd/internal/state"
 	"github.com/lxc/incus-os/incus-osd/internal/systemd"
 )
 
@@ -27,6 +28,11 @@ const (
 
 type bird struct {
 	common
+}
+
+// configured reports whether there is anything for BIRD to run: a raw configuration or EVPN.
+func (b *bird) configured() bool {
+	return b.state.Applications.Bird.Config.Config != "" || b.state.Applications.Bird.Config.EVPN != nil
 }
 
 // Debug runs a read-only birdc command.
@@ -72,6 +78,7 @@ func (b *bird) FactoryReset(ctx context.Context) error {
 	}
 
 	b.state.Applications.Bird.Config.Config = ""
+	b.state.Applications.Bird.Config.EVPN = nil
 
 	return nil
 }
@@ -105,7 +112,7 @@ func (b *bird) Restart(ctx context.Context) error {
 		return err
 	}
 
-	if b.state.Applications.Bird.Config.Config == "" {
+	if !b.configured() {
 		return nil
 	}
 
@@ -124,7 +131,7 @@ func (b *bird) RestoreBackup(archive io.Reader) error {
 		return err
 	}
 
-	b.state.Applications.Bird.Config.Config = string(contents)
+	b.state.Applications.Bird.Config.Config = birdRawConfig(string(contents))
 
 	return nil
 }
@@ -161,7 +168,7 @@ func (b *bird) Start(ctx context.Context) error {
 		}
 	}
 
-	if b.state.Applications.Bird.Config.Config == "" {
+	if !b.configured() {
 		return nil
 	}
 
@@ -242,14 +249,17 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// UpdateConfig validates and applies a new bird.conf.
+// UpdateConfig validates and applies a new bird.conf and EVPN settings.
 func (b *bird) UpdateConfig(ctx context.Context, req any) error {
 	newState, ok := req.(*api.ApplicationBird)
 	if !ok {
 		return fmt.Errorf("request type \"%T\" isn't expected ApplicationBird", req)
 	}
 
-	newConfig := newState.Config.Config
+	newConfig, err := birdFullConfig(newState.Config.Config, b.state.System.Network.Config, newState.Config.EVPN)
+	if err != nil {
+		return err
+	}
 
 	if newConfig != "" {
 		err := validateBirdConfig(ctx, newConfig)
@@ -260,12 +270,22 @@ func (b *bird) UpdateConfig(ctx context.Context, req any) error {
 
 	b.state.Applications.Bird.Config = newState.Config
 
-	err := b.writeConfig()
+	return b.apply(ctx, newConfig)
+}
+
+// apply writes a full configuration and starts, reconfigures or stops BIRD to match.
+func (b *bird) apply(ctx context.Context, cfg string) error {
+	oldCfg, err := os.ReadFile(birdConfigPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+
+	err = writeBirdConfig(cfg)
 	if err != nil {
 		return err
 	}
 
-	if newConfig == "" {
+	if cfg == "" {
 		return b.Stop(ctx)
 	}
 
@@ -278,7 +298,52 @@ func (b *bird) UpdateConfig(ctx context.Context, req any) error {
 		return fmt.Errorf("failed to reconfigure BIRD: %w", err)
 	}
 
+	// BIRD keeps the old route target on the IMET route of an EVPN protocol whose export target changed, so
+	// the other VTEPs stop flooding to this one. Restarting the changed EVPN protocols re-announces it.
+	for _, protocol := range changedBirdEVPNProtocols(string(oldCfg), cfg) {
+		_, err = subprocess.RunCommandContext(ctx, "birdc", "-s", birdSocketPath, "restart", protocol)
+		if err != nil {
+			return fmt.Errorf("failed to restart BIRD protocol %s: %w", protocol, err)
+		}
+	}
+
 	return nil
+}
+
+// ValidateBirdEVPN checks that the EVPN settings of the BIRD application still work with a new network
+// configuration.
+func ValidateBirdEVPN(s *state.State, netCfg *api.SystemNetworkConfig) error {
+	_, err := birdEVPNConfig(netCfg, s.Applications.Bird.Config.EVPN)
+	if err != nil {
+		return fmt.Errorf("the bird application's evpn settings don't fit the new network configuration: %w", err)
+	}
+
+	return nil
+}
+
+// RefreshBirdEVPN regenerates the EVPN part of bird.conf after a network configuration change and reconfigures
+// BIRD, when the BIRD application is installed and has EVPN settings.
+func RefreshBirdEVPN(ctx context.Context, s *state.State) error {
+	if s.Applications.Bird.Config.EVPN == nil {
+		return nil
+	}
+
+	b := &bird{common: common{state: s, appConfig: &s.Applications.Bird.Config.ApplicationConfig, appState: &s.Applications.Bird.State}}
+	if !b.IsInstalled() {
+		return nil
+	}
+
+	cfg, err := birdFullConfig(s.Applications.Bird.Config.Config, s.System.Network.Config, s.Applications.Bird.Config.EVPN)
+	if err != nil {
+		return err
+	}
+
+	err = validateBirdConfig(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	return b.apply(ctx, cfg)
 }
 
 // WipeLocalData removes the on-disk configuration.
@@ -293,8 +358,16 @@ func (*bird) WipeLocalData(_ context.Context) error {
 
 // writeConfig writes the configuration from the state to disk, or removes it.
 func (b *bird) writeConfig() error {
-	cfg := b.state.Applications.Bird.Config.Config
+	cfg, err := birdFullConfig(b.state.Applications.Bird.Config.Config, b.state.System.Network.Config, b.state.Applications.Bird.Config.EVPN)
+	if err != nil {
+		return err
+	}
 
+	return writeBirdConfig(cfg)
+}
+
+// writeBirdConfig writes a full configuration to disk, or removes it.
+func writeBirdConfig(cfg string) error {
 	if cfg == "" {
 		err := os.Remove(birdConfigPath)
 		if err != nil && !os.IsNotExist(err) {
@@ -315,6 +388,16 @@ func (b *bird) writeConfig() error {
 	}
 
 	return os.Rename(birdConfigPath+".new", birdConfigPath)
+}
+
+// birdRawConfig strips the parts IncusOS generated from a bird.conf read back from disk.
+func birdRawConfig(contents string) string {
+	raw, _, _ := strings.Cut(contents, birdEVPNHeader)
+	if strings.HasPrefix(raw, birdMinimalHeader) {
+		return ""
+	}
+
+	return strings.TrimRight(raw, "\n") + "\n"
 }
 
 func validateBirdConfig(ctx context.Context, cfg string) error {
