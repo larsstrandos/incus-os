@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +24,12 @@ func SetupChains(ctx context.Context) error {
 
 	// Ensure we have an input filtering chain.
 	_, err = subprocess.RunCommandContext(ctx, "nft", "add", "chain", "inet", "incus-osd", "input", "{ type filter hook input priority 0 ; policy accept ; }")
+	if err != nil {
+		return err
+	}
+
+	// Ensure we have a VXLAN filtering chain, ahead of the input chain and its user rules.
+	_, err = subprocess.RunCommandContext(ctx, "nft", "add", "chain", "inet", "incus-osd", "vxlan-underlay", "{ type filter hook input priority -10 ; policy accept ; }")
 	if err != nil {
 		return err
 	}
@@ -354,4 +361,181 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 	}
 
 	return nil
+}
+
+// ApplyVXLANFilters keeps VXLAN traffic on the underlay when the host has interfaces with the underlay role.
+func ApplyVXLANFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig) error {
+	// Make sure we have the expected chains.
+	err := SetupChains(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Empty the chain.
+	_, err = subprocess.RunCommandContext(ctx, "nft", "flush", "chain", "inet", "incus-osd", "vxlan-underlay")
+	if err != nil {
+		return err
+	}
+
+	for _, rule := range vxlanRules(networkCfg) {
+		_, err = subprocess.RunCommandContext(ctx, "nft", append([]string{"add", "rule", "inet", "incus-osd", "vxlan-underlay"}, rule...)...)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// vxlanRules returns the rules of the vxlan-underlay chain. With underlay interfaces, VXLAN traffic is dropped unless it
+// arrives on one of them, from the firewall sources of the VXLAN and, for single VNI bridges, with a configured VNI.
+// The input hook runs after IPv4 reassembly, so the VNI of a fragmented packet is checked too. IPv6 fragments
+// aren't reassembled yet at that point and VXLAN must not be fragmented, so they are dropped.
+//
+// The VNI is matched as raw payload (vxlanVNI), as the "vxlan vni" expression of nftables doesn't match received
+// packets in the input hook.
+func vxlanRules(networkCfg *api.SystemNetworkConfig) [][]string {
+	underlay := []string{}
+
+	for _, iface := range networkCfg.Interfaces {
+		if slices.Contains(iface.Roles, api.SystemNetworkInterfaceRoleUnderlay) {
+			underlay = append(underlay, "_v"+iface.Name)
+		}
+	}
+
+	for _, iface := range networkCfg.Bonds {
+		if slices.Contains(iface.Roles, api.SystemNetworkInterfaceRoleUnderlay) {
+			underlay = append(underlay, "_v"+iface.Name)
+		}
+	}
+
+	for _, iface := range networkCfg.VLANs {
+		if slices.Contains(iface.Roles, api.SystemNetworkInterfaceRoleUnderlay) {
+			underlay = append(underlay, iface.Name)
+		}
+	}
+
+	for _, iface := range networkCfg.Wireguard {
+		if slices.Contains(iface.Roles, api.SystemNetworkInterfaceRoleUnderlay) {
+			underlay = append(underlay, iface.Name)
+		}
+	}
+
+	if len(underlay) == 0 || len(networkCfg.VXLANs) == 0 {
+		return nil
+	}
+
+	ports := []string{}
+
+	for _, vxlan := range networkCfg.VXLANs {
+		port := strconv.Itoa(vxlanPort(vxlan))
+		if !slices.Contains(ports, port) {
+			ports = append(ports, port)
+		}
+	}
+
+	rules := [][]string{
+		{"udp", "dport", nftSet(ports), "iifname", "!=", nftSet(underlay), "counter", "drop"},
+		{"meta", "nfproto", "ipv6", "exthdr", "frag", "exists", "udp", "dport", nftSet(ports), "counter", "drop"},
+	}
+
+	// The VNIs of the VXLANs, by local address and port.
+	endpoints := []string{}
+	endpointVNIs := map[string][]string{}
+
+	for _, vxlan := range networkCfg.VXLANs {
+		family := "ip"
+		if strings.Contains(vxlan.Local, ":") {
+			family = "ip6"
+		}
+
+		match := []string{family, "daddr", vxlan.Local, "udp", "dport", strconv.Itoa(vxlanPort(vxlan))}
+
+		endpoint := strings.Join(match, " ")
+		if !slices.Contains(endpoints, endpoint) {
+			endpoints = append(endpoints, endpoint)
+		}
+
+		endpointVNIs[endpoint] = append(endpointVNIs[endpoint], strconv.Itoa(vxlan.VNI))
+		match = append(match, vxlanVNI, strconv.Itoa(vxlan.VNI))
+
+		if len(vxlan.FirewallSources) == 0 {
+			continue
+		}
+
+		sources := sourcePrefixes(vxlan.FirewallSources, family == "ip6")
+		if len(sources) == 0 {
+			rules = append(rules, append(slices.Clone(match), "counter", "drop"))
+
+			continue
+		}
+
+		rules = append(rules, append(slices.Clone(match), family, "saddr", "!=", nftSet(sources), "counter", "drop"))
+	}
+
+	for _, endpoint := range endpoints {
+		match := strings.Split(endpoint, " ")
+		rules = append(rules, append(match, vxlanVNI, "!=", nftSet(endpointVNIs[endpoint]), "counter", "drop"))
+	}
+
+	return rules
+}
+
+// vxlanVNI matches the 24 bit VNI of a VXLAN packet, after the 8 bytes of UDP header and the 4 bytes of VXLAN flags.
+const vxlanVNI = "@th,96,24"
+
+// vxlanPort returns the UDP port of a VXLAN.
+func vxlanPort(vxlan api.SystemNetworkVXLAN) int {
+	if vxlan.Port == 0 {
+		return 4789
+	}
+
+	return vxlan.Port
+}
+
+// sourcePrefixes returns the sources of one address family as prefixes, leaving out those within another source,
+// as nftables refuses overlapping intervals in a set.
+func sourcePrefixes(sources []string, ipv6 bool) []string {
+	prefixes := []netip.Prefix{}
+
+	for _, source := range sources {
+		prefix, err := netip.ParsePrefix(source)
+		if err != nil {
+			addr, err := netip.ParseAddr(source)
+			if err != nil {
+				continue
+			}
+
+			prefix = netip.PrefixFrom(addr, addr.BitLen())
+		}
+
+		if prefix.Addr().Is6() != ipv6 {
+			continue
+		}
+
+		prefixes = append(prefixes, prefix.Masked())
+	}
+
+	ret := []string{}
+
+	for i, prefix := range prefixes {
+		covered := slices.ContainsFunc(prefixes[:i], func(other netip.Prefix) bool {
+			return other.Bits() <= prefix.Bits() && other.Contains(prefix.Addr())
+		})
+
+		covered = covered || slices.ContainsFunc(prefixes[i+1:], func(other netip.Prefix) bool {
+			return other.Bits() < prefix.Bits() && other.Contains(prefix.Addr())
+		})
+
+		if !covered {
+			ret = append(ret, prefix.String())
+		}
+	}
+
+	return ret
+}
+
+// nftSet returns an anonymous nftables set of the given elements.
+func nftSet(elements []string) string {
+	return "{" + strings.Join(elements, ",") + "}"
 }

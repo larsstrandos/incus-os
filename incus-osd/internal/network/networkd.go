@@ -141,6 +141,12 @@ func ApplyNetworkConfiguration(ctx context.Context, s *state.State, networkCfg *
 		return err
 	}
 
+	// Keep VXLAN traffic on the underlay.
+	err = nftables.ApplyVXLANFilters(ctx, networkCfg)
+	if err != nil {
+		return err
+	}
+
 	// Apply the forwarding firewall rules.
 	err = nftables.ApplyForwardFilters(ctx, networkCfg)
 	if err != nil {
