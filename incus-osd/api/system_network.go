@@ -17,6 +17,9 @@ const (
 
 	// SystemNetworkInterfaceRoleStorage represents the "storage" role.
 	SystemNetworkInterfaceRoleStorage = "storage"
+
+	// SystemNetworkInterfaceRoleUnderlay represents the "underlay" role, for the network that carries VXLAN traffic.
+	SystemNetworkInterfaceRoleUnderlay = "underlay"
 )
 
 // SystemNetwork defines a struct to hold the three types of supported network configuration.
@@ -60,7 +63,8 @@ type SystemNetworkConfig struct {
 // SystemNetworkVXLAN contains information about a bridge with a VXLAN port whose forwarding entries are managed
 // by a routing daemon, such as BIRD with BGP EVPN.
 type SystemNetworkVXLAN struct {
-	// Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules.
+	// Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules. When the host has
+	// underlay interfaces, the VXLAN only accepts traffic from them.
 	FirewallSources []string `json:"firewall_sources,omitempty" yaml:"firewall_sources,omitempty"`
 
 	// Local VTEP address, one of the host's static addresses.
