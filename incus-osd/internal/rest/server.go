@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lxc/incus-os/incus-osd/internal/metrics"
 	"github.com/lxc/incus-os/incus-osd/internal/scheduling"
 	"github.com/lxc/incus-os/incus-osd/internal/state"
 )
@@ -19,6 +20,7 @@ import (
 type Server struct {
 	jobScheduler *scheduling.Scheduler
 	listener     net.Listener
+	metrics      http.Handler
 	state        *state.State
 }
 
@@ -30,6 +32,13 @@ func NewServer(_ context.Context, l net.Listener, s *state.State, j *scheduling.
 		listener:     l,
 		state:        s,
 	}
+
+	metricsHandler, err := metrics.NewHandler(s, server.installedApplications)
+	if err != nil {
+		return nil, err
+	}
+
+	server.metrics = metricsHandler
 
 	return &server, nil
 }
@@ -85,6 +94,7 @@ func (s *Server) Serve() error {
 	router.HandleFunc("/1.0/debug/secureboot/:update", s.apiDebugSecureBootUpdate)
 	router.HandleFunc("/1.0/licenses", s.apiLicenses)
 	router.HandleFunc("/1.0/licenses/{name}", s.apiLicensesEndpoint)
+	router.HandleFunc("/1.0/metrics", s.apiMetrics)
 	router.HandleFunc("/1.0/services", s.apiServices)
 	router.HandleFunc("/1.0/services/{name}", s.apiServicesEndpoint)
 	router.HandleFunc("/1.0/services/{name}/:action", s.apiServicesEndpointAction)
