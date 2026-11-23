@@ -755,6 +755,8 @@ definitions:
                     $ref: '#/definitions/SystemNetworkVRF'
                 type: array
                 x-go-name: VRFs
+            vtep:
+                $ref: '#/definitions/SystemNetworkVTEP'
             vxlans:
                 items:
                     $ref: '#/definitions/SystemNetworkVXLAN'
@@ -1205,22 +1207,50 @@ definitions:
         title: SystemNetworkVRF contains information about a VRF (virtual routing and forwarding) device.
         type: object
         x-go-package: github.com/lxc/incus-os/incus-osd/api
+    SystemNetworkVTEP:
+        description: SystemNetworkVTEP contains the local VXLAN tunnel endpoint (VTEP) shared by the VXLANs, as their defaults.
+        properties:
+            firewall_sources:
+                description: Addresses or subnets allowed to send VXLAN traffic, for VXLANs without their own.
+                items:
+                    type: string
+                type: array
+                x-go-name: FirewallSources
+            local:
+                description: Local VTEP address, for VXLANs without their own.
+                type: string
+                x-go-name: Local
+            mtu:
+                description: MTU of the VXLAN bridges without their own.
+                format: int64
+                type: integer
+                x-go-name: MTU
+            port:
+                description: UDP port of the VXLANs without their own, 4789 if not set.
+                format: int64
+                type: integer
+                x-go-name: Port
+        type: object
+        x-go-package: github.com/lxc/incus-os/incus-osd/api
     SystemNetworkVXLAN:
         description: |-
             SystemNetworkVXLAN contains information about a bridge with a VXLAN port whose forwarding entries are managed
             by a routing daemon, such as BIRD with BGP EVPN.
         properties:
             firewall_sources:
-                description: Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules.
+                description: |-
+                    Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules. When the host has
+                    underlay interfaces, the VXLAN only accepts traffic from them. Defaults to the ones of the VTEP.
                 items:
                     type: string
                 type: array
                 x-go-name: FirewallSources
             local:
-                description: Local VTEP address, one of the host's static addresses.
+                description: Local VTEP address, one of the host's static addresses. Defaults to the one of the VTEP.
                 type: string
                 x-go-name: Local
             mtu:
+                description: MTU of the bridge and its VXLAN port, defaults to the one of the VTEP.
                 format: int64
                 type: integer
                 x-go-name: MTU
@@ -1228,7 +1258,7 @@ definitions:
                 type: string
                 x-go-name: Name
             port:
-                description: UDP port, 4789 if not set.
+                description: UDP port, defaults to the one of the VTEP, or 4789.
                 format: int64
                 type: integer
                 x-go-name: Port

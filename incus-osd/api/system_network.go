@@ -57,23 +57,40 @@ type SystemNetworkConfig struct {
 	Wireguard  []SystemNetworkWireguard `json:"wireguard,omitempty"  yaml:"wireguard,omitempty"`
 	Loopback   *SystemNetworkLoopback   `json:"loopback,omitempty"   yaml:"loopback,omitempty"`
 	VRFs       []SystemNetworkVRF       `json:"vrfs,omitempty"       yaml:"vrfs,omitempty"`
+	VTEP       *SystemNetworkVTEP       `json:"vtep,omitempty"       yaml:"vtep,omitempty"`
 	VXLANs     []SystemNetworkVXLAN     `json:"vxlans,omitempty"     yaml:"vxlans,omitempty"`
+}
+
+// SystemNetworkVTEP contains the local VXLAN tunnel endpoint (VTEP) shared by the VXLANs, as their defaults.
+type SystemNetworkVTEP struct {
+	// Addresses or subnets allowed to send VXLAN traffic, for VXLANs without their own.
+	FirewallSources []string `json:"firewall_sources,omitempty" yaml:"firewall_sources,omitempty"`
+
+	// Local VTEP address, for VXLANs without their own.
+	Local string `json:"local,omitempty" yaml:"local,omitempty"`
+
+	// MTU of the VXLAN bridges without their own.
+	MTU int `json:"mtu,omitempty" yaml:"mtu,omitempty"`
+
+	// UDP port of the VXLANs without their own, 4789 if not set.
+	Port int `json:"port,omitempty" yaml:"port,omitempty"`
 }
 
 // SystemNetworkVXLAN contains information about a bridge with a VXLAN port whose forwarding entries are managed
 // by a routing daemon, such as BIRD with BGP EVPN.
 type SystemNetworkVXLAN struct {
 	// Addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules. When the host has
-	// underlay interfaces, the VXLAN only accepts traffic from them.
+	// underlay interfaces, the VXLAN only accepts traffic from them. Defaults to the ones of the VTEP.
 	FirewallSources []string `json:"firewall_sources,omitempty" yaml:"firewall_sources,omitempty"`
 
-	// Local VTEP address, one of the host's static addresses.
-	Local string `json:"local" yaml:"local"`
+	// Local VTEP address, one of the host's static addresses. Defaults to the one of the VTEP.
+	Local string `json:"local,omitempty" yaml:"local,omitempty"`
 
+	// MTU of the bridge and its VXLAN port, defaults to the one of the VTEP.
 	MTU  int    `json:"mtu,omitempty" yaml:"mtu,omitempty"`
 	Name string `json:"name"          yaml:"name"`
 
-	// UDP port, 4789 if not set.
+	// UDP port, defaults to the one of the VTEP, or 4789.
 	Port int `json:"port,omitempty" yaml:"port,omitempty"`
 
 	// VXLAN network identifier. The bridge carries this one VNI untagged.
@@ -400,4 +417,33 @@ type SystemNetworkWireguardPeerState struct {
 	PersistentKeepalive string                      `json:"persistent_keepalive,omitempty" yaml:"persistent_keepalive,omitempty"`
 	PublicKey           string                      `json:"public_key"                     yaml:"public_key"`
 	Stats               SystemNetworkInterfaceStats `json:"stats"                          yaml:"stats"`
+}
+
+// EffectiveVXLANs returns the VXLANs with the defaults of the VTEP applied.
+func (c *SystemNetworkConfig) EffectiveVXLANs() []SystemNetworkVXLAN {
+	ret := make([]SystemNetworkVXLAN, 0, len(c.VXLANs))
+
+	for _, vxlan := range c.VXLANs {
+		if c.VTEP != nil {
+			if vxlan.Local == "" {
+				vxlan.Local = c.VTEP.Local
+			}
+
+			if vxlan.Port == 0 {
+				vxlan.Port = c.VTEP.Port
+			}
+
+			if vxlan.MTU == 0 {
+				vxlan.MTU = c.VTEP.MTU
+			}
+
+			if len(vxlan.FirewallSources) == 0 {
+				vxlan.FirewallSources = c.VTEP.FirewallSources
+			}
+		}
+
+		ret = append(ret, vxlan)
+	}
+
+	return ret
 }
