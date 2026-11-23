@@ -1282,3 +1282,40 @@ func TestVXLANSingleVNIConfig(t *testing.T) {
 	require.Equal(t, "[Match]\nName=_xblue\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nBridge=blue\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n\n[Bridge]\nLearning=yes\n", contents["26-_xblue.network"])
 	require.Equal(t, "[Match]\nName=l3cust\n\n[Link]\nRequiredForOnline=no\n\n[Network]\nVRF=cust\nLinkLocalAddressing=no\nConfigureWithoutCarrier=yes\n", contents["26-l3cust.network"])
 }
+
+func TestVXLANUnderlayConfig(t *testing.T) {
+	t.Parallel()
+
+	newCfg := func() api.SystemNetworkConfig {
+		return api.SystemNetworkConfig{
+			Interfaces: []api.SystemNetworkInterface{
+				{Name: "mgmt", Hwaddr: "AA:BB:CC:DD:EE:01", Addresses: []string{"10.0.0.10/24"}, Roles: []string{"management", "cluster"}},
+				{Name: "uplink0", Hwaddr: "AA:BB:CC:DD:EE:02", Addresses: []string{"10.1.0.10/24"}, Roles: []string{"underlay"}},
+			},
+			Loopback: &api.SystemNetworkLoopback{Addresses: []string{"10.255.0.11/32"}},
+			VRFs:     []api.SystemNetworkVRF{{Name: "cust", Table: 100}},
+			VXLANs: []api.SystemNetworkVXLAN{
+				{Name: "evpn0", Local: "10.255.0.11", VNI: 10200},
+				{Name: "blue", Local: "10.1.0.10", VNI: 10100},
+			},
+		}
+	}
+
+	cfg := newCfg()
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	// Without underlay interfaces, any static address outside of a VRF can be used.
+	cfg = newCfg()
+	cfg.Interfaces[1].Roles = nil
+	cfg.VXLANs[1].Local = "10.0.0.10"
+	require.NoError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false))
+
+	// Bad configurations.
+	cfg = newCfg()
+	cfg.VXLANs[1].Local = "10.0.0.10"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "vxlan 1 local address '10.0.0.10' isn't on an underlay interface or the loopback")
+
+	cfg = newCfg()
+	cfg.Interfaces[1].VRF = "cust"
+	require.EqualError(t, ValidateNetworkConfiguration(context.TODO(), &cfg, false), "interface 'uplink0' with role 'underlay' cannot be in a vrf")
+}

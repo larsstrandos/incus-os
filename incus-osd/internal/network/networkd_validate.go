@@ -482,8 +482,8 @@ func validateVRFs(cfg *api.SystemNetworkConfig) error {
 			return fmt.Errorf("%s '%s' vrf '%s' doesn't exist", kind, name, vrf)
 		}
 
-		// The host's own services (API, DNS, NTP, updates, clustering) run in the default VRF.
-		for _, role := range []string{api.SystemNetworkInterfaceRoleManagement, api.SystemNetworkInterfaceRoleCluster} {
+		// The host's own services (API, DNS, NTP, updates, clustering) and the VXLAN devices run in the default VRF.
+		for _, role := range []string{api.SystemNetworkInterfaceRoleManagement, api.SystemNetworkInterfaceRoleCluster, api.SystemNetworkInterfaceRoleUnderlay} {
 			if slices.Contains(roles, role) {
 				return fmt.Errorf("%s '%s' with role '%s' cannot be in a vrf", kind, name, role)
 			}
@@ -568,7 +568,7 @@ func validateRoles(roles []string) error {
 
 	for _, role := range roles {
 		// Confirm role is valid.
-		if !slices.Contains([]string{api.SystemNetworkInterfaceRoleManagement, api.SystemNetworkInterfaceRoleCluster, api.SystemNetworkInterfaceRoleInstances, api.SystemNetworkInterfaceRoleStorage}, role) {
+		if !slices.Contains([]string{api.SystemNetworkInterfaceRoleManagement, api.SystemNetworkInterfaceRoleCluster, api.SystemNetworkInterfaceRoleInstances, api.SystemNetworkInterfaceRoleStorage, api.SystemNetworkInterfaceRoleUnderlay}, role) {
 			return fmt.Errorf("role %q is unsupported", role)
 		}
 
@@ -842,8 +842,63 @@ func staticHostAddresses(cfg *api.SystemNetworkConfig) []netip.Addr {
 	return ret
 }
 
+// underlayAddresses returns the static addresses of the interfaces with the underlay role and of the loopback,
+// or nil when no interface has the underlay role.
+func underlayAddresses(cfg *api.SystemNetworkConfig) []netip.Addr {
+	addresses := []string{}
+	found := false
+
+	add := func(roles []string, vrf string, ifaceAddresses []string) {
+		if vrf != "" || !slices.Contains(roles, api.SystemNetworkInterfaceRoleUnderlay) {
+			return
+		}
+
+		found = true
+
+		addresses = append(addresses, ifaceAddresses...)
+	}
+
+	for _, iface := range cfg.Interfaces {
+		add(iface.Roles, iface.VRF, iface.Addresses)
+	}
+
+	for _, bond := range cfg.Bonds {
+		add(bond.Roles, bond.VRF, bond.Addresses)
+	}
+
+	for _, vlan := range cfg.VLANs {
+		add(vlan.Roles, vlan.VRF, vlan.Addresses)
+	}
+
+	for _, wg := range cfg.Wireguard {
+		add(wg.Roles, "", wg.Addresses)
+	}
+
+	if !found {
+		return nil
+	}
+
+	if cfg.Loopback != nil {
+		addresses = append(addresses, cfg.Loopback.Addresses...)
+	}
+
+	ret := []netip.Addr{}
+
+	for _, address := range addresses {
+		prefix, err := netip.ParsePrefix(address)
+		if err != nil {
+			continue
+		}
+
+		ret = append(ret, prefix.Addr())
+	}
+
+	return ret
+}
+
 func validateVXLANs(cfg *api.SystemNetworkConfig) error {
 	hostAddresses := staticHostAddresses(cfg)
+	underlay := underlayAddresses(cfg)
 
 	// VXLAN devices with a fixed VNI can share an address and port, as long as each VNI is used only once
 	// per port.
@@ -862,6 +917,10 @@ func validateVXLANs(cfg *api.SystemNetworkConfig) error {
 
 		if !slices.Contains(hostAddresses, local) {
 			return fmt.Errorf("vxlan %d local address '%s' isn't a static address of the host outside of a vrf", index, vxlan.Local)
+		}
+
+		if underlay != nil && !slices.Contains(underlay, local) {
+			return fmt.Errorf("vxlan %d local address '%s' isn't on an underlay interface or the loopback", index, vxlan.Local)
 		}
 
 		if vxlan.Port < 0 || vxlan.Port > 65535 {
