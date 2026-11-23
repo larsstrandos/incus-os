@@ -16,6 +16,7 @@ Debugging </reference/debugging>
 Installing without Secure Boot </reference/installing-without-secureboot>
 Installing without a TPM </reference/installing-without-tpm>
 Licenses </reference/licenses>
+Metrics </reference/metrics>
 Partitioning scheme </reference/partitioning-scheme>
 Recovery </reference/recovery>
 Security </reference/security>

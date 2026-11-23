@@ -34,6 +34,7 @@ ECDSA
 EFI
 EOF
 ESXi
+exporter
 FAT
 fibre
 formatters
@@ -107,6 +108,7 @@ OCI
 oddlama
 OEM
 OpenFGA
+OpenMetrics
 OpenStack
 OSD
 OSDs
@@ -122,6 +124,7 @@ PK
 PKCS
 Pre
 preseed
+Prometheus
 proxied
 Proxmox
 Proxmox's
@@ -136,6 +139,7 @@ SAS
 Scaleway
 SFP
 SLAAC
+SMART
 SMBIOS
 SSD
 struct
