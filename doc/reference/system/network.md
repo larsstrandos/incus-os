@@ -22,6 +22,7 @@ Each interface, bond, VLAN or WireGuard can be assigned one or more _roles_, whi
 * `instances`: The device should be made available for use by Incus containers or virtual machines
 * `management`: The device is used for management
 * `storage`: The device is used for network-attached storage connectivity
+* `underlay`: The device carries VXLAN traffic (see [VXLANs](#vxlans))
 
 IncusOS will automatically assign the `cluster` and `management` roles to all interfaces if no roles have been manually configured.
 If only the `management` role has been assigned, then the `cluster` role will automatically be assigned to the same interfaces.
@@ -135,7 +136,7 @@ A VRF is a separate routing table with its own set of interfaces. Each entry of 
 Interfaces, bonds and VLANs are put into a VRF by setting their `vrf` option to the name of the VRF. Their addresses and routes then belong to the VRF and its table.
 A VLAN doesn't have to be in the same VRF as its parent.
 
-Interfaces with the `management` or `cluster` role can't be in a VRF, as the services of IncusOS itself only run in the default VRF.
+Interfaces with the `management`, `cluster` or `underlay` role can't be in a VRF, as the services of IncusOS itself and the VXLAN devices only run in the default VRF.
 Interfaces in a VRF also aren't picked when IncusOS automatically assigns the `management` role.
 
 Incus routed NICs can be put into a VRF with their `vrf` option. Unless `ipv4.host_tables` and `ipv6.host_tables` are set to the table of the VRF, Incus also adds the host routes of the NIC to the main table.
@@ -159,8 +160,9 @@ to a VNI is left to a routing daemon, such as BGP EVPN in the `bird` application
 * `mtu`: Optionally, the MTU of the bridge and its VXLAN port. It must leave room for the 50 bytes of VXLAN encapsulation
   (70 bytes over IPv6) within the MTU of the routed network.
 
-* `firewall_sources`: Optionally, addresses or subnets allowed to send VXLAN traffic to interfaces with firewall rules,
-  usually the VTEP addresses of the other hosts.
+* `firewall_sources`: Optionally, addresses or subnets allowed to send VXLAN traffic, usually the VTEP addresses of the
+  other hosts or the subnet they come from. They apply to interfaces with firewall rules, and to all interfaces when the
+  host has underlay interfaces.
 
 * `vrf`: Optionally, the VRF the bridge is put in, for example for the layer 3 VNI of a VRF in BGP EVPN.
 
@@ -182,6 +184,21 @@ Incus instances are attached with a bridged NIC without a VLAN, for example
 
 When the address, port or VNI of a VXLAN changes, IncusOS recreates its VXLAN port. The bridge is kept, so instances stay
 attached.
+
+#### Underlay
+
+VXLAN has no authentication: a VXLAN device accepts any packet sent to its address and port. Giving one or more
+interfaces the `underlay` role keeps VXLAN traffic on the network those interfaces are on. IncusOS then drops VXLAN
+traffic that:
+
+* arrives on any other interface, including Incus networks, so instances can't send VXLAN traffic to the host;
+* comes from outside the `firewall_sources` of the VXLAN, when set;
+* carries a VNI that no VXLAN on that address and port uses;
+* is fragmented over IPv6. The underlay must have room for the VXLAN encapsulation.
+
+These rules apply before the interface firewall rules and don't depend on them. The `local` address of each VXLAN must
+then be on an underlay interface or the `loopback`. The rules have counters, which
+`nft list chain inet incus-osd vxlan-underlay` shows.
 
 ### `required_for_online` values
 
