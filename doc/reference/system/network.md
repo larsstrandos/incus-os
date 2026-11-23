@@ -146,23 +146,45 @@ When a VRF is removed or its table changed, IncusOS recreates the VRF device and
 
 A VXLAN bridge connects Incus instances on different hosts in the same layer 2 network over a routed network, one
 bridge per VXLAN network identifier (VNI). IncusOS only creates the devices. Which remote hosts and MAC addresses belong
-to a VNI is left to a routing daemon, such as BGP EVPN in the `bird` application. Each entry of `vxlans` consists of:
+to a VNI is left to a routing daemon, such as BGP EVPN in the `bird` application.
+
+Like the VXLAN interface of a switch, `vtep` holds the local VXLAN tunnel endpoint (VTEP) that the VXLANs share. Its
+`local`, `port`, `mtu` and `firewall_sources` are the defaults of every entry of `vxlans`, which can set their own. With
+it, a VXLAN usually only needs a name and a VNI:
+
+```yaml
+vtep:
+  local: 10.255.0.11
+  mtu: 1450
+  firewall_sources:
+    - 10.255.0.0/24
+vxlans:
+  - name: blue
+    vni: 10100
+  - name: red
+    vni: 10200
+  - name: l3cust
+    vni: 50100
+    vrf: cust
+```
+
+Each entry of `vxlans` consists of:
 
 * `name`: The name of the bridge that instances attach to.
 
 * `vni`: The VXLAN network identifier the bridge carries.
 
-* `local`: The local VXLAN tunnel endpoint (VTEP) address. It must be a static address of the host outside of a VRF, usually
-  a `loopback` address that the routing daemon announces.
+* `local`: The local VXLAN tunnel endpoint (VTEP) address, by default the one of `vtep`. It must be a static address of the
+  host outside of a VRF, usually a `loopback` address that the routing daemon announces.
 
-* `port`: Optionally, the UDP port (defaults to 4789, the port switches use).
+* `port`: Optionally, the UDP port (defaults to the one of `vtep`, or 4789, the port switches use).
 
-* `mtu`: Optionally, the MTU of the bridge and its VXLAN port. It must leave room for the 50 bytes of VXLAN encapsulation
-  (70 bytes over IPv6) within the MTU of the routed network.
+* `mtu`: Optionally, the MTU of the bridge and its VXLAN port (defaults to the one of `vtep`). It must leave room for
+  the 50 bytes of VXLAN encapsulation (70 bytes over IPv6) within the MTU of the routed network.
 
 * `firewall_sources`: Optionally, addresses or subnets allowed to send VXLAN traffic, usually the VTEP addresses of the
-  other hosts or the subnet they come from. They apply to interfaces with firewall rules, and to all interfaces when the
-  host has underlay interfaces.
+  other hosts or the subnet they come from (defaults to the ones of `vtep`). They apply to interfaces with firewall
+  rules, and to all interfaces when the host has underlay interfaces.
 
 * `vrf`: Optionally, the VRF the bridge is put in, for example for the layer 3 VNI of a VRF in BGP EVPN.
 
