@@ -238,12 +238,12 @@ func ApplyInputFilters(ctx context.Context, networkCfg *api.SystemNetworkConfig)
 			{"icmpv6", "type", "{echo-request,nd-neighbor-solicit,nd-neighbor-advert,nd-router-solicit,nd-router-advert,mld-listener-query}", "accept"},
 		}
 
-		// Allow BGP and BFD when the BIRD application is present.
+		// Allow BGP and BFD (single hop and multihop) when the BIRD application is present.
 		_, birdErr := os.Stat("/usr/sbin/bird")
 		if birdErr == nil {
 			rules = append(rules,
 				[]string{"tcp", "dport", "179", "accept"},
-				[]string{"udp", "dport", "{3784,3785}", "accept"},
+				[]string{"udp", "dport", "{3784,3785,4784}", "accept"},
 			)
 		}
 
